@@ -33,7 +33,7 @@ class SpaceObject(BaseModel):
 # This class merges all data into one searchable 'Map'.
 # ==========================================================
 class GlobalMap:
-    def _init_(self):
+    def __init__(self):
         # The 'Live Map' - A dictionary for O(1) lookup
         self.registry: Dict[str, SpaceObject] = {}
 
