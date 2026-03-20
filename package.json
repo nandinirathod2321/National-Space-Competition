@@ -1,0 +1,26 @@
+{
+  "name": "national-space-competition",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nandinirathod2321/National-Space-Competition.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/nandinirathod2321/National-Space-Competition/issues"
+  },
+  "homepage": "https://github.com/nandinirathod2321/National-Space-Competition#readme",
+  "dependencies": {
+    "cesium": "^1.139.1",
+    "pixi.js": "^8.17.1",
+    "three": "^0.183.2"
+  }
+}

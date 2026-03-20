@@ -7,6 +7,9 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from schemas import TelemetryPayload
 from state_store import store
 from physics_engine import rk4_step, get_eci_to_rtn_matrix, calculate_fuel_consumed
@@ -14,6 +17,15 @@ from global_map import acm_global_map, SpaceObject, Vector3D
 import numpy as np
 
 app = FastAPI(title="Akashveer Telemetry Service")
+
+# CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.get("/")
 async def root():
@@ -134,3 +146,45 @@ async def simulation_tick(dt: float = 1.0):
         store.update_object(obj_id, new_p, new_v, data["timestamp"], data["type"])
 
     return {"status": "OK", "new_states_count": len(states)}
+
+
+@app.get("/api/states")
+async def get_all_states():
+    """Returns all tracked objects for the frontend 3D visualization."""
+    result = []
+    for obj_id, data in store.objects.items():
+        result.append({
+            "id": obj_id,
+            "type": data.get("type", "DEBRIS"),
+            "pos": data["pos"].tolist(),
+            "vel": data["vel"].tolist(),
+            "fuel_kg": data.get("fuel_kg", 0),
+            "mass_kg": data.get("mass_kg", 0),
+            "timestamp": str(data.get("timestamp", "")),
+        })
+    return {"objects": result, "count": len(result)}
+
+
+@app.get("/api/status")
+async def get_status():
+    """Dashboard status summary."""
+    objects = store.objects
+    sats = [o for o in objects.values() if o.get("type") == "SATELLITE"]
+    debris = [o for o in objects.values() if o.get("type") == "DEBRIS"]
+    total_fuel = sum(o.get("fuel_kg", 0) for o in sats)
+    return {
+        "total_objects": len(objects),
+        "satellites": len(sats),
+        "debris": len(debris),
+        "total_fuel_kg": round(total_fuel, 2),
+    }
+
+
+# Serve frontend
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+    @app.get("/dashboard")
+    async def serve_dashboard():
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
