@@ -702,6 +702,57 @@ html, body {
 .log-msg {
     color: var(--text-secondary);
 }
+
+/* Detail Sections */
+.detail-section {
+    margin-top: 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border-dim);
+    border-bottom: 1px solid var(--border-dim);
+}
+
+.detail-section h4 {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    color: var(--accent-cyan);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+    margin-top: 0;
+}
+
+/* Maneuver Controls */
+#target-alt {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+}
+
+#btn-maneuver-plan,
+#btn-maneuver-execute {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+#btn-maneuver-plan:hover {
+    background: rgba(0,240,255,0.3) !important;
+}
+
+#btn-maneuver-execute:hover {
+    background: rgba(255,100,100,0.4) !important;
+    box-shadow: 0 0 10px rgba(255,100,100,0.3);
+}
+
+#maneuver-info {
+    padding: 8px;
+    background: rgba(0,0,0,0.2);
+    border-left: 2px solid var(--accent-cyan);
+    border-radius: 3px;
+}
+}
 .log-entry.log-info .log-msg { color: var(--accent-cyan); }
 .log-entry.log-warn .log-msg { color: var(--warn-color); }
 .log-entry.log-danger .log-msg { color: var(--danger-color); }

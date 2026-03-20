@@ -6,7 +6,7 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -14,7 +14,11 @@ from schemas import TelemetryPayload
 from state_store import store
 from physics_engine import rk4_step, get_eci_to_rtn_matrix, calculate_fuel_consumed
 from global_map import acm_global_map, SpaceObject, Vector3D
+from orbital_mechanics import state_to_orbital_elements, orbital_elements_to_state, hohmann_transfer, circular_orbit_velocity
+from pydantic import BaseModel
+from typing import Optional
 import numpy as np
+import math
 
 app = FastAPI(title="Akashveer Telemetry Service")
 
@@ -26,6 +30,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ========== MODELS ==========
+class ManeuverRequest(BaseModel):
+    """Request to perform an orbital maneuver."""
+    satellite_id: str
+    target_altitude_km: float  # Target circular orbit altitude
+    target_inclination_deg: Optional[float] = None  # Target inclination (if None, keep current)
+    
+class ManeuverPlan(BaseModel):
+    """Plan for a maneuver (returns delta-V and timing info)."""
+    satellite_id: str
+    current_altitude_km: float
+    target_altitude_km: float
+    dv_required: float  # km/s
+    fuel_required_kg: float
+    can_execute: bool
+    reason: str
 
 @app.get("/")
 async def root():
@@ -180,6 +201,152 @@ async def get_status():
     }
 
 
+@app.get("/api/orbits")
+async def get_orbital_elements():
+    """Returns orbital elements for all satellites (for visualization)."""
+    orbits = []
+    for obj_id, data in store.objects.items():
+        if data.get("type") == "SATELLITE":
+            try:
+                elements = state_to_orbital_elements(data["pos"], data["vel"])
+                orbits.append({
+                    "id": obj_id,
+                    "elements": elements.to_dict(),
+                    "position": data["pos"].tolist(),
+                    "velocity": data["vel"].tolist(),
+                    "fuel_kg": data.get("fuel_kg", 0),
+                    "mass_kg": data.get("mass_kg", 0),
+                })
+            except Exception as e:
+                print(f"Error calculating orbital elements for {obj_id}: {e}")
+    return {"orbits": orbits, "count": len(orbits)}
+
+
+@app.post("/api/maneuver/plan")
+async def plan_maneuver(request: ManeuverRequest):
+    """Plans an orbital maneuver and returns delta-V requirements."""
+    sat_id = request.satellite_id
+    
+    if sat_id not in store.objects:
+        raise HTTPException(status_code=404, detail=f"Satellite {sat_id} not found")
+    
+    sat = store.objects[sat_id]
+    if sat.get("type") != "SATELLITE":
+        raise HTTPException(status_code=400, detail=f"Object {sat_id} is not a satellite")
+    
+    try:
+        # Get current orbital elements
+        current_pos = sat["pos"]
+        current_vel = sat["vel"]
+        current_elements = state_to_orbital_elements(current_pos, current_vel)
+        current_altitude = current_elements.a * (1 - current_elements.e) - 6378.137
+        
+        # Calculate Hohmann transfer delta-V
+        transfer = hohmann_transfer(current_pos, current_vel, request.target_altitude_km)
+        
+        if not transfer:
+            return {
+                "satellite_id": sat_id,
+                "can_execute": False,
+                "reason": "Cannot transfer to lower orbit with Hohmann (already in lower orbit)",
+                "dv_required": 0,
+                "fuel_required_kg": 0,
+            }
+        
+        dv_required = transfer["dv_total"]
+        
+        # Calculate fuel required using Tsiolkovsky equation
+        isp = 300.0  # seconds
+        g0 = 9.80665 / 1000  # convert to km/s^2
+        m_initial = sat.get("mass_kg", 550)
+        
+        # From Tsiolkovsky: dv = isp * g0 * ln(m_initial / m_final)
+        # Solving for fuel: fuel = m_initial * (1 - e^(-dv / (isp * g0)))
+        exp_term = math.exp(-dv_required / (isp * g0))
+        m_final = m_initial * exp_term
+        fuel_required = m_initial - m_final
+        
+        current_fuel = sat.get("fuel_kg", 0)
+        can_execute = current_fuel >= fuel_required
+        
+        return {
+            "satellite_id": sat_id,
+            "current_altitude_km": float(current_altitude),
+            "target_altitude_km": request.target_altitude_km,
+            "dv_required": float(dv_required),
+            "fuel_required_kg": float(fuel_required),
+            "current_fuel_kg": float(current_fuel),
+            "can_execute": can_execute,
+            "reason": "Ready to execute" if can_execute else f"Insufficient fuel: have {current_fuel:.2f}kg, need {fuel_required:.2f}kg",
+            "transfer_time_seconds": float(transfer.get("transfer_time", 0)),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error planning maneuver: {str(e)}")
+
+
+@app.post("/api/maneuver/execute")
+async def execute_maneuver(request: ManeuverRequest):
+    """Executes an orbital maneuver (Hohmann transfer)."""
+    sat_id = request.satellite_id
+    
+    if sat_id not in store.objects:
+        raise HTTPException(status_code=404, detail=f"Satellite {sat_id} not found")
+    
+    sat = store.objects[sat_id]
+    if sat.get("type") != "SATELLITE":
+        raise HTTPException(status_code=400, detail=f"Object {sat_id} is not a satellite")
+    
+    try:
+        current_pos = sat["pos"].copy()
+        current_vel = sat["vel"].copy()
+        
+        # Get transfer info
+        transfer = hohmann_transfer(current_pos, current_vel, request.target_altitude_km)
+        if not transfer:
+            return {"status": "FAILED", "reason": "Cannot transfer to lower orbit"}
+        
+        # Get current elements
+        current_elements = state_to_orbital_elements(current_pos, current_vel)
+        
+        # Calculate new velocity after first burn (in direction of velocity)
+        v_mag = np.linalg.norm(current_vel)
+        dv1 = transfer["dv1"]
+        
+        # Apply delta-V in the direction of motion
+        dv_vector = (current_vel / v_mag) * dv1
+        new_vel = current_vel + dv_vector
+        
+        # Update satellite state
+        sat["vel"] = new_vel
+        
+        # Calculate fuel consumed
+        isp = 300.0
+        g0 = 9.80665 / 1000
+        m_initial = sat.get("mass_kg", 550)
+        fuel_burned = m_initial * (1 - math.exp(-dv1 / (isp * g0)))
+        
+        sat["fuel_kg"] = max(0, sat.get("fuel_kg", 0) - fuel_burned)
+        sat["mass_kg"] = max(0, sat.get("mass_kg", 0) - fuel_burned)
+        
+        # Log the maneuver
+        print(f"🚀 MANEUVER EXECUTED: {sat_id}")
+        print(f"   ΔV: {dv1:.3f} km/s")
+        print(f"   Fuel burned: {fuel_burned:.2f} kg")
+        print(f"   Remaining fuel: {sat['fuel_kg']:.2f} kg")
+        
+        return {
+            "status": "EXECUTED",
+            "satellite_id": sat_id,
+            "dv_applied": float(dv1),
+            "fuel_burned_kg": float(fuel_burned),
+            "remaining_fuel_kg": float(sat["fuel_kg"]),
+            "new_velocity": new_vel.tolist(),
+            "transfer_time_seconds": float(transfer.get("transfer_time", 0)),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error executing maneuver: {str(e)}")
+
+
 # Serve frontend
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
 if os.path.isdir(FRONTEND_DIR):
@@ -187,4 +354,13 @@ if os.path.isdir(FRONTEND_DIR):
 
     @app.get("/dashboard")
     async def serve_dashboard():
+        # Serve the full 3D dashboard
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    
+    @app.get("/3d")
+    async def serve_3d_dashboard():
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    
+    @app.get("/docs-dashboard")  
+    async def serve_docs_dashboard():
+        return FileResponse(os.path.join(FRONTEND_DIR, "simple.html"))

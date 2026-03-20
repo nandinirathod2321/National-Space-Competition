@@ -19,6 +19,8 @@ let scene, camera, renderer, controls, earthGroup, starField;
 let clock = new THREE.Clock();
 let objectMeshes = {};        // id -> THREE mesh
 let objectData = {};          // id -> last known data
+let orbitalData = {};         // id -> orbital elements
+let orbitMeshes = {};         // id -> orbit ellipse mesh
 let selectedObjectId = null;
 let autoTickInterval = null;
 let tickCount = 0;
@@ -27,6 +29,7 @@ let showLabels = true;
 let showGrid = true;
 let labelSprites = {};
 let pixi = null;
+let showOrbits = true;
 
 // ============================================================
 //  LOADING
@@ -451,6 +454,23 @@ function deselectObject() {
     document.getElementById('object-detail').innerHTML = '<p class="detail-placeholder">Click an object in the 3D view to inspect</p>';
 }
 
+function updateDashboardStats(status, stateData) {
+    const sats = status.satellites || 0;
+    const debris = status.debris || 0;
+    const total = status.total_objects || 0;
+    const fuel = status.total_fuel_kg || 0;
+
+    document.getElementById('stat-satellites').textContent = sats;
+    document.getElementById('stat-debris').textContent = debris;
+    document.getElementById('stat-fuel').textContent = fuel.toFixed(1) + ' kg';
+
+    // Bar fills
+    const maxObjs = Math.max(total, 1);
+    document.getElementById('sat-bar-fill').style.width = ((sats / Math.max(sats + debris, 1)) * 100) + '%';
+    document.getElementById('debris-bar-fill').style.width = ((debris / Math.max(sats + debris, 1)) * 100) + '%';
+    document.getElementById('fuel-bar-fill').style.width = Math.min(100, (fuel / (sats * 50 || 1)) * 100) + '%';
+}
+
 function updateDetailPanel(id) {
     const obj = objectData[id];
     if (!obj) return;
@@ -550,12 +570,57 @@ async function postTelemetry(payload) {
     }
 }
 
+async function fetchOrbits() {
+    try {
+        const res = await fetch(`${API_BASE}/api/orbits`);
+        return await res.json();
+    } catch (e) {
+        console.error('Error fetching orbits:', e);
+        return { orbits: [] };
+    }
+}
+
+async function planManeuver(satelliteId, targetAltitudeKm) {
+    try {
+        const res = await fetch(`${API_BASE}/api/maneuver/plan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                satellite_id: satelliteId,
+                target_altitude_km: targetAltitudeKm,
+            }),
+        });
+        return await res.json();
+    } catch (e) {
+        console.error('Error planning maneuver:', e);
+        return null;
+    }
+}
+
+async function executeManeuver(satelliteId, targetAltitudeKm) {
+    try {
+        const res = await fetch(`${API_BASE}/api/maneuver/execute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                satellite_id: satelliteId,
+                target_altitude_km: targetAltitudeKm,
+            }),
+        });
+        return await res.json();
+    } catch (e) {
+        console.error('Error executing maneuver:', e);
+        return null;
+    }
+}
+
 // ============================================================
 //  SYNC STATE FROM API
 // ============================================================
 async function syncState() {
     const stateData = await fetchStates();
     const statusData = await fetchStatus();
+    const orbitsData = await fetchOrbits();
 
     if (stateData && stateData.objects) {
         const newIds = new Set();
@@ -579,23 +644,207 @@ async function syncState() {
     if (statusData) {
         updateDashboardStats(statusData, stateData);
     }
+
+    if (orbitsData && orbitsData.orbits) {
+        for (const orbit of orbitsData.orbits) {
+            orbitalData[orbit.id] = orbit.elements;
+        }
+        if (showOrbits) drawAllOrbits();
+    }
 }
 
-function updateDashboardStats(status, stateData) {
-    const sats = status.satellites || 0;
-    const debris = status.debris || 0;
-    const total = status.total_objects || 0;
-    const fuel = status.total_fuel_kg || 0;
+// ============================================================
+//  ORBIT VISUALIZATION
+// ============================================================
+function drawAllOrbits() {
+    // Remove old orbit meshes
+    Object.values(orbitMeshes).forEach(mesh => {
+        scene.remove(mesh);
+    });
+    orbitMeshes = {};
 
-    document.getElementById('stat-satellites').textContent = sats;
-    document.getElementById('stat-debris').textContent = debris;
-    document.getElementById('stat-fuel').textContent = fuel.toFixed(1) + ' kg';
+    // Draw new orbits
+    for (const [satId, elements] of Object.entries(orbitalData)) {
+        if (elements && elements.a) {
+            drawOrbit(satId, elements);
+        }
+    }
+}
 
-    // Bar fills
-    const maxObjs = Math.max(total, 1);
-    document.getElementById('sat-bar-fill').style.width = ((sats / Math.max(sats + debris, 1)) * 100) + '%';
-    document.getElementById('debris-bar-fill').style.width = ((debris / Math.max(sats + debris, 1)) * 100) + '%';
-    document.getElementById('fuel-bar-fill').style.width = Math.min(100, (fuel / (sats * 50 || 1)) * 100) + '%';
+function drawOrbit(satId, elements) {
+    const MU = 398600.4418;  // km^3/s^2
+    const a = elements.a;
+    const e = elements.e;
+    const i = elements.i;
+    const raan = elements.raan;
+    const w = elements.w;
+
+    // Create ellipse geometry
+    const perigee = a * (1 - e);
+    const apogee = a * (1 + e);
+    const semiMinor = Math.sqrt(a * a * (1 - e * e));
+
+    // Number of points to draw the orbit
+    const points = [];
+    const segments = 256;
+
+    for (let i = 0; i <= segments; i++) {
+        const nu = (i / segments) * Math.PI * 2;  // True anomaly
+
+        // Position in orbital frame
+        const p = a * (1 - e * e);
+        const r = p / (1 + e * Math.cos(nu));
+
+        const x = r * Math.cos(nu);
+        const y = r * Math.sin(nu);
+        const z = 0;
+
+        // Rotation matrices
+        const cosW = Math.cos(w), sinW = Math.sin(w);
+        const cosI = Math.cos(i), sinI = Math.sin(i);
+        const cosRaan = Math.cos(raan), sinRaan = Math.sin(raan);
+
+        // Rotate to ECI frame
+        const x1 = cosW * x - sinW * y;
+        const y1 = sinW * x + cosW * y;
+        const z1 = z;
+
+        const x2 = x1;
+        const y2 = cosI * y1 - sinI * z1;
+        const z2 = sinI * y1 + cosI * z1;
+
+        const xEci = cosRaan * x2 - sinRaan * y2;
+        const yEci = sinRaan * x2 + cosRaan * y2;
+        const zEci = z2;
+
+        // Convert to 3D space (scale down)
+        points.push(new THREE.Vector3(xEci * SCALE, yEci * SCALE, zEci * SCALE));
+    }
+
+    // Create line geometry
+    const geometry = new THREE.BufferGeometry();
+    geometry.setFromPoints(points);
+
+    // Color based on satellite
+    const hue = (satId.charCodeAt(0) * 123) % 360;
+    const color = new THREE.Color(`hsl(${hue}, 80%, 60%)`);
+
+    const material = new THREE.LineBasicMaterial({
+        color: color,
+        transparent: true,
+        opacity: 0.4,
+        linewidth: 1.5,
+    });
+
+    const orbit = new THREE.Line(geometry, material);
+    scene.add(orbit);
+    orbitMeshes[satId] = orbit;
+}
+
+// ============================================================
+//  MANEUVER PANEL
+// ============================================================
+function updateDetailPanel(id) {
+    const obj = objectData[id];
+    if (!obj) return;
+
+    const isSat = obj.type === 'SATELLITE';
+    const typeClass = isSat ? 'type-sat' : 'type-debris';
+    const r = Math.sqrt(obj.pos[0] ** 2 + obj.pos[1] ** 2 + obj.pos[2] ** 2);
+    const alt = r - EARTH_RADIUS;
+    const speed = Math.sqrt(obj.vel[0] ** 2 + obj.vel[1] ** 2 + obj.vel[2] ** 2);
+
+    const elements = orbitalData[id];
+    let orbitalDetails = '';
+    
+    if (elements && isSat) {
+        orbitalDetails = `
+            <div class="detail-section">
+                <h4>Orbital Elements</h4>
+                <div class="detail-row"><span class="detail-key">SMA</span><span class="detail-val">${(elements.a || 0).toFixed(2)} km</span></div>
+                <div class="detail-row"><span class="detail-key">ECC</span><span class="detail-val">${(elements.e || 0).toFixed(4)}</span></div>
+                <div class="detail-row"><span class="detail-key">INC</span><span class="detail-val">${((elements.i || 0) * 180 / Math.PI).toFixed(2)}°</span></div>
+                <div class="detail-row"><span class="detail-key">PERIOD</span><span class="detail-val">${(elements.period_minutes || 0).toFixed(1)} min</span></div>
+                <div class="detail-row"><span class="detail-key">PERI</span><span class="detail-val">${(elements.periapsis_km || 0).toFixed(0)} km</span></div>
+                <div class="detail-row"><span class="detail-key">APOGEE</span><span class="detail-val">${(elements.apoapsis_km || 0).toFixed(0)} km</span></div>
+            </div>
+        `;
+    }
+
+    const maneuverPanel = isSat ? `
+        <div class="detail-section">
+            <h4>Orbital Maneuver</h4>
+            <div style="display:flex; gap:8px; margin-bottom:10px;">
+                <input type="number" id="target-alt" placeholder="Target Alt (km)" min="0" max="50000" value="400" style="flex:1; padding:6px; border:1px solid var(--accent-cyan); background:transparent; color:white; border-radius:3px;">
+                <button id="btn-maneuver-plan" style="padding:6px 12px; background:rgba(0,240,255,0.2); border:1px solid var(--accent-cyan); color:var(--accent-cyan); cursor:pointer; border-radius:3px;">PLAN</button>
+            </div>
+            <div id="maneuver-info" style="font-size:12px; color:var(--text-dim);"></div>
+            <button id="btn-maneuver-execute" style="display:none; width:100%; padding:8px; margin-top:8px; background:rgba(255,100,100,0.3); border:1px solid #ff6464; color:#ff6464; cursor:pointer; border-radius:3px; font-weight:bold;">EXECUTE BURN</button>
+        </div>
+    ` : '';
+
+    document.getElementById('object-detail').innerHTML = `
+        <div class="detail-id">${obj.id}</div>
+        <div class="detail-row"><span class="detail-key">TYPE</span><span class="detail-val ${typeClass}">${obj.type}</span></div>
+        <div class="detail-row"><span class="detail-key">ALTITUDE</span><span class="detail-val">${alt.toFixed(2)} km</span></div>
+        <div class="detail-row"><span class="detail-key">SPEED</span><span class="detail-val">${speed.toFixed(4)} km/s</span></div>
+        <div class="detail-row"><span class="detail-key">POS X</span><span class="detail-val">${obj.pos[0].toFixed(3)} km</span></div>
+        <div class="detail-row"><span class="detail-key">POS Y</span><span class="detail-val">${obj.pos[1].toFixed(3)} km</span></div>
+        <div class="detail-row"><span class="detail-key">POS Z</span><span class="detail-val">${obj.pos[2].toFixed(3)} km</span></div>
+        <div class="detail-row"><span class="detail-key">VEL X</span><span class="detail-val">${obj.vel[0].toFixed(5)} km/s</span></div>
+        <div class="detail-row"><span class="detail-key">VEL Y</span><span class="detail-val">${obj.vel[1].toFixed(5)} km/s</span></div>
+        <div class="detail-row"><span class="detail-key">VEL Z</span><span class="detail-val">${obj.vel[2].toFixed(5)} km/s</span></div>
+        ${isSat ? `<div class="detail-row"><span class="detail-key">FUEL</span><span class="detail-val" style="color:var(--fuel-color)">${obj.fuel_kg.toFixed(2)} kg</span></div>` : ''}
+        ${isSat ? `<div class="detail-row"><span class="detail-key">MASS</span><span class="detail-val">${obj.mass_kg.toFixed(2)} kg</span></div>` : ''}
+        ${orbitalDetails}
+        ${maneuverPanel}
+    `;
+
+    // Attach maneuver listeners if satellite
+    if (isSat) {
+        const planBtn = document.getElementById('btn-maneuver-plan');
+        const execBtn = document.getElementById('btn-maneuver-execute');
+        const infoDiv = document.getElementById('maneuver-info');
+        const targetAltInput = document.getElementById('target-alt');
+
+        let lastPlan = null;
+
+        planBtn.addEventListener('click', async () => {
+            const targetAlt = parseFloat(targetAltInput.value);
+            if (isNaN(targetAlt) || targetAlt < 0) {
+                infoDiv.textContent = 'Invalid target altitude';
+                return;
+            }
+
+            infoDiv.textContent = 'Planning...';
+            const plan = await planManeuver(id, targetAlt);
+            lastPlan = plan;
+
+            if (plan) {
+                infoDiv.innerHTML = `
+                    ΔV: ${plan.dv_required.toFixed(3)} km/s<br>
+                    Fuel: ${plan.fuel_required_kg.toFixed(2)} kg<br>
+                    ${plan.can_execute ? '<span style="color:#4f4">✓ Ready</span>' : '<span style="color:#f44">✗ ' + plan.reason + '</span>'}
+                `;
+                if (plan.can_execute) {
+                    execBtn.style.display = 'block';
+                } else {
+                    execBtn.style.display = 'none';
+                }
+            }
+        });
+
+        execBtn.addEventListener('click', async () => {
+            if (!lastPlan || !lastPlan.can_execute) return;
+            const result = await executeManeuver(id, parseFloat(targetAltInput.value));
+            if (result && result.status === 'EXECUTED') {
+                addLog(`✈️  ${id}: Maneuver executed! ΔV=${result.dv_applied.toFixed(3)} km/s`, 'success');
+                infoDiv.textContent = 'Maneuver executed!';
+                execBtn.style.display = 'none';
+                setTimeout(() => syncState(), 500);
+            }
+        });
+    }
 }
 
 // ============================================================
@@ -745,6 +994,19 @@ function updateClock() {
 //  BUTTON HANDLERS
 // ============================================================
 function setupControls() {
+    // Toggle orbits
+    document.getElementById('btn-toggle-grid').addEventListener('click', () => {
+        showOrbits = !showOrbits;
+        if (showOrbits) {
+            drawAllOrbits();
+            addLog('Orbits displayed', 'info');
+        } else {
+            Object.values(orbitMeshes).forEach(mesh => scene.remove(mesh));
+            orbitMeshes = {};
+            addLog('Orbits hidden', 'info');
+        }
+    });
+
     // Tick
     document.getElementById('btn-tick').addEventListener('click', async () => {
         const dt = parseFloat(document.getElementById('dt-slider').value);

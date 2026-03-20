@@ -4,37 +4,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Akashveer — Space Situational Awareness Dashboard</title>
-    <meta name="description" content="Real-time 3D orbital visualization dashboard for autonomous constellation management, collision detection, and space debris tracking.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <!-- ==================== LOADING SCREEN ==================== -->
+    <!-- LOADING SCREEN -->
     <div id="loading-screen">
         <div class="loader-content">
-            <div class="loader-ring">
-                <div class="ring-segment"></div>
-                <div class="ring-segment"></div>
-                <div class="ring-segment"></div>
-            </div>
+            <div class="loader-ring"><div class="ring-segment"></div><div class="ring-segment"></div><div class="ring-segment"></div></div>
             <h1 class="loader-title">AKASHVEER</h1>
             <p class="loader-subtitle">Autonomous Constellation Manager</p>
-            <div class="loader-bar">
-                <div class="loader-bar-fill" id="loader-bar-fill"></div>
-            </div>
+            <div class="loader-bar"><div class="loader-bar-fill" id="loader-bar-fill"></div></div>
             <p class="loader-status" id="loader-status">Initializing ECI Reference Frame...</p>
         </div>
     </div>
 
-    <!-- ==================== MAIN DASHBOARD ==================== -->
+    <!-- MAIN DASHBOARD -->
     <div id="app" style="opacity:0; transition: opacity 0.5s ease;">
-
         <!-- 3D Viewport -->
         <div id="viewport-3d"></div>
-
-        <!-- 2D Pixi.js HUD overlay canvas -->
         <div id="hud-overlay"></div>
 
         <!-- Top Navigation Bar -->
@@ -47,12 +37,7 @@
                             <ellipse cx="20" cy="20" rx="16" ry="6" stroke="url(#logoGrad)" stroke-width="1.5" transform="rotate(-30 20 20)" opacity="0.4"/>
                             <ellipse cx="20" cy="20" rx="16" ry="6" stroke="url(#logoGrad)" stroke-width="1.5" transform="rotate(30 20 20)" opacity="0.4"/>
                             <circle cx="20" cy="20" r="3" fill="url(#logoGrad)"/>
-                            <defs>
-                                <linearGradient id="logoGrad" x1="0" y1="0" x2="40" y2="40">
-                                    <stop offset="0%" stop-color="#00f0ff"/>
-                                    <stop offset="100%" stop-color="#7b2fff"/>
-                                </linearGradient>
-                            </defs>
+                            <defs><linearGradient id="logoGrad" x1="0" y1="0" x2="40" y2="40"><stop offset="0%" stop-color="#00f0ff"/><stop offset="100%" stop-color="#7b2fff"/></linearGradient></defs>
                         </svg>
                     </div>
                     <div class="logo-text">
@@ -69,7 +54,7 @@
                 <div class="utc-clock" id="utc-clock">UTC 00:00:00</div>
             </div>
             <div class="top-bar-right">
-                <button class="btn-icon" id="btn-toggle-grid" title="Toggle Grid">
+                <button class="btn-icon" id="btn-toggle-grid" title="Toggle Orbits">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg>
                 </button>
                 <button class="btn-icon" id="btn-toggle-labels" title="Toggle Labels">
@@ -81,154 +66,57 @@
             </div>
         </header>
 
-        <!-- Left Panel: Stats Cards -->
+        <!-- Left Panel -->
         <aside id="left-panel">
             <div class="panel-section">
-                <h2 class="panel-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                    MISSION STATUS
-                </h2>
-                <div class="stat-card" id="card-satellites">
-                    <div class="stat-card-header">
-                        <span class="stat-label">ACTIVE SATELLITES</span>
-                        <span class="stat-badge sat-badge">SAT</span>
-                    </div>
-                    <div class="stat-value" id="stat-satellites">0</div>
-                    <div class="stat-bar">
-                        <div class="stat-bar-fill sat-fill" id="sat-bar-fill" style="width:0%"></div>
-                    </div>
-                </div>
-                <div class="stat-card" id="card-debris">
-                    <div class="stat-card-header">
-                        <span class="stat-label">TRACKED DEBRIS</span>
-                        <span class="stat-badge debris-badge">DBR</span>
-                    </div>
-                    <div class="stat-value" id="stat-debris">0</div>
-                    <div class="stat-bar">
-                        <div class="stat-bar-fill debris-fill" id="debris-bar-fill" style="width:0%"></div>
-                    </div>
-                </div>
-                <div class="stat-card" id="card-warnings">
-                    <div class="stat-card-header">
-                        <span class="stat-label">CDM WARNINGS</span>
-                        <span class="stat-badge warn-badge">CDM</span>
-                    </div>
-                    <div class="stat-value warn-value" id="stat-warnings">0</div>
-                    <div class="stat-bar">
-                        <div class="stat-bar-fill warn-fill" id="warn-bar-fill" style="width:0%"></div>
-                    </div>
-                </div>
-                <div class="stat-card" id="card-fuel">
-                    <div class="stat-card-header">
-                        <span class="stat-label">CONSTELLATION FUEL</span>
-                        <span class="stat-badge fuel-badge">FUEL</span>
-                    </div>
-                    <div class="stat-value fuel-value" id="stat-fuel">0 kg</div>
-                    <div class="stat-bar">
-                        <div class="stat-bar-fill fuel-fill" id="fuel-bar-fill" style="width:0%"></div>
-                    </div>
+                <h2 class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>MISSION STATUS</h2>
+                <div class="stat-card"><div class="stat-card-header"><span class="stat-label">ACTIVE SATELLITES</span><span class="stat-badge sat-badge">SAT</span></div><div class="stat-value" id="stat-satellites">0</div><div class="stat-bar"><div class="stat-bar-fill sat-fill" id="sat-bar-fill" style="width:0%"></div></div></div>
+                <div class="stat-card"><div class="stat-card-header"><span class="stat-label">DEBRIS TRACKED</span><span class="stat-badge debris-badge">DBR</span></div><div class="stat-value" id="stat-debris">0</div><div class="stat-bar"><div class="stat-bar-fill debris-fill" id="debris-bar-fill" style="width:0%"></div></div></div>
+                <div class="stat-card"><div class="stat-card-header"><span class="stat-label">TOTAL FUEL</span><span class="stat-badge fuel-badge">KG</span></div><div class="stat-value" id="stat-fuel">0 kg</div><div class="stat-bar"><div class="stat-bar-fill fuel-fill" id="fuel-bar-fill" style="width:0%"></div></div></div>
+            </div>
+
+            <div class="panel-section">
+                <h2 class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>SIMULATION CONTROL</h2>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    <div><label class="control-label">Δt (seconds)</label><input type="range" id="dt-slider" min="0.1" max="10" step="0.1" value="1.0" class="slider"><span id="dt-display">1.0s</span></div>
+                    <div><label class="control-label">Auto-Tick Interval (ms)</label><input type="range" id="interval-slider" min="100" max="2000" step="100" value="500" class="slider"><span id="interval-display">500ms</span></div>
+                    <button id="btn-tick" class="btn-primary">STEP FORWARD</button>
+                    <button id="btn-auto-tick" class="btn-primary btn-success">AUTO-TICK</button>
+                    <button id="btn-stop" class="btn-secondary" style="display:none;">STOP AUTO-TICK</button>
                 </div>
             </div>
 
             <div class="panel-section">
-                <h2 class="panel-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                    SIMULATION
-                </h2>
-                <div class="sim-controls">
-                    <button class="btn-sim" id="btn-tick" title="Advance 1 tick">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        TICK
-                    </button>
-                    <button class="btn-sim" id="btn-auto-tick" title="Auto tick">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/><line x1="19" y1="3" x2="19" y2="21"/></svg>
-                        AUTO
-                    </button>
-                    <button class="btn-sim btn-danger" id="btn-stop" title="Stop auto tick" style="display:none;">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                        STOP
-                    </button>
-                </div>
-                <div class="sim-speed">
-                    <label>Δt (seconds)</label>
-                    <input type="range" id="dt-slider" min="0.1" max="60" step="0.1" value="1.0">
-                    <span class="dt-value" id="dt-value">1.0s</span>
-                </div>
-                <div class="sim-speed">
-                    <label>Auto interval (ms)</label>
-                    <input type="range" id="interval-slider" min="50" max="2000" step="50" value="500">
-                    <span class="dt-value" id="interval-value">500ms</span>
-                </div>
-            </div>
-
-            <div class="panel-section">
-                <h2 class="panel-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
-                    INJECT TELEMETRY
-                </h2>
-                <div class="inject-controls">
-                    <button class="btn-inject" id="btn-inject-demo">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
-                        Load Demo Scenario
-                    </button>
-                    <button class="btn-inject btn-inject-collision" id="btn-inject-collision">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                        Collision Scenario
-                    </button>
-                </div>
+                <h2 class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>TRACKED OBJECTS</h2>
+                <div class="object-list" id="object-list"></div>
             </div>
         </aside>
 
-        <!-- Right Panel: Object Detail -->
-        <aside id="right-panel">
+        <!-- Right Panel: Object Details -->
+        <div id="right-panel">
             <div class="panel-section">
-                <h2 class="panel-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-                    SELECTED OBJECT
-                </h2>
-                <div id="object-detail" class="object-detail">
-                    <p class="detail-placeholder">Click an object in the 3D view to inspect</p>
-                </div>
+                <h2 class="panel-title"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>OBJECT DETAILS</h2>
+                <div id="object-detail" class="object-detail"><p class="detail-placeholder">Click an object in the 3D view to inspect</p></div>
             </div>
-            <div class="panel-section">
-                <h2 class="panel-title">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M3 9h18M9 21V9"/></svg>
-                    OBJECT REGISTRY
-                </h2>
-                <div id="object-list" class="object-list">
-                    <p class="detail-placeholder">No objects tracked</p>
-                </div>
-            </div>
-        </aside>
+        </div>
 
-        <!-- Bottom Event Log -->
+        <!-- Event Log -->
         <div id="event-log">
-            <div class="log-header">
-                <span class="log-title">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-                    EVENT LOG
-                </span>
-                <button class="btn-clear-log" id="btn-clear-log">CLEAR</button>
-            </div>
-            <div class="log-entries" id="log-entries">
-                <div class="log-entry log-info">
-                    <span class="log-time">T+0</span>
-                    <span class="log-msg">System initialized. Awaiting telemetry data.</span>
-                </div>
-            </div>
+            <div class="log-header"><span class="log-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>EVENT LOG</span><button class="btn-clear-log" id="btn-clear-log">CLEAR</button></div>
+            <div class="log-entries" id="log-entries"><div class="log-entry log-info"><span class="log-time">T+0</span><span class="log-msg">System initialized. Awaiting telemetry data.</span></div></div>
         </div>
     </div>
 
-    <!-- ==================== SCRIPTS ==================== -->
+    <!-- SCRIPTS -->
     <script type="importmap">
     {
         "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+            "three": "https://cdn.jsdelivr.net/npm/three@r158/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@r158/examples/jsm/"
         }
     }
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.3.2/dist/pixi.min.js"></script>
+    
     <script type="module" src="/static/app.js"></script>
 </body>
 </html>

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Akashveer — Mission Control Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        body { font-family: Arial, sans-serif; background: #05080f; color: #e4ecfa; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { color: #00e4ff; margin-top: 0; }
+        .status { padding: 20px; background: rgba(0, 228, 255, 0.1); border: 1px solid #00e4ff; border-radius: 8px; margin: 20px 0; }
+        .api-list { list-style: none; padding: 0; }
+        .api-list li { padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .api-list a { color: #00e4ff; text-decoration: none; }
+        .api-list a:hover { text-decoration: underline; }
+        .code { background: #0a0f1c; padding: 10px; border-radius: 4px; font-family: monospace; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛰️ AKASHVEER Mission Control</h1>
+        
+        <div class="status">
+            <h2>✓ Server Status: ONLINE</h2>
+            <p>The backend is running on port 8000</p>
+        </div>
+
+        <h2>📡 Available APIs</h2>
+        <ul class="api-list">
+            <li><strong>Mission Status</strong>
+                <div class="code">GET /api/status</div>
+                <small>Shows satellite/debris count and fuel status</small>
+            </li>
+            <li><strong>Current States</strong>
+                <div class="code">GET /api/states</div>
+                <small>All tracked objects with position, velocity, fuel</small>
+            </li>
+            <li><strong>Orbital Elements</strong>
+                <div class="code">GET /api/orbits</div>
+                <small>Keplerian elements for all satellites</small>
+            </li>
+            <li><strong>Plan Maneuver</strong>
+                <div class="code">POST /api/maneuver/plan</div>
+                <small>Calculate delta-V for orbital transfer</small>
+            </li>
+            <li><strong>Execute Maneuver</strong>
+                <div class="code">POST /api/maneuver/execute</div>
+                <small>Perform a propulsive burn</small>
+            </li>
+            <li><strong>Ingest Telemetry</strong>
+                <div class="code">POST /api/telemetry</div>
+                <small>Update satellite positions and velocities</small>
+            </li>
+            <li><strong>Simulation Tick</strong>
+                <div class="code">POST /api/tick</div>
+                <small>Propagate all objects forward in time</small>
+            </li>
+        </ul>
+
+        <h2>🔧 Next Steps</h2>
+        <p>The full 3D dashboard (app.js) needs to be completed. For now, you can:</p>
+        <ol>
+            <li>Test the API directly: <a href="/api/status" target="_blank">/api/status</a></li>
+            <li>View API documentation: <a href="/docs" target="_blank">/docs</a></li>
+            <li>Send test telemetry data to the /api/telemetry endpoint</li>
+        </ol>
+
+        <h2>📝 Test Data</h2>
+        <p>To populate the system with test satellites:</p>
+        <div class="code" style="white-space: pre-wrap; max-width: 100%; overflow-x: auto;">
+POST /api/telemetry
+Content-Type: application/json
+
+{
+  "timestamp": "2026-03-20T00:00:00Z",
+  "objects": [
+    {
+      "id": "SAT-001",
+      "type": "SATELLITE",
+      "r": {"x": -1200, "y": 3500, "z": 5200},
+      "v": {"x": -4.5, "y": 5.2, "z": 1.3}
+    }
+  ]
+}
+        </div>
+
+        <h2>🌐 Real-time Visualization</h2>
+        <p>The full 3D orbital visualization with Three.js is in development.</p>
+        <p>Current status: Backend fully functional ✓ | Frontend: In progress</p>
+    </div>
+</body>
+</html>
