@@ -104,6 +104,9 @@ function createEarth() {
 
     earthGroup = new THREE.Group();
 
+    // Earth sphere geometry
+    const earthGeo = new THREE.SphereGeometry(EARTH_R, 64, 64);
+
     // Load high-res earth textures from unpkg CDN
     const textureLoader = new THREE.TextureLoader();
     const earthColorMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg');
