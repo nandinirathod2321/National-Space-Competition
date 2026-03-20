@@ -15,10 +15,13 @@ from state_store import store
 from physics_engine import rk4_step, get_eci_to_rtn_matrix, calculate_fuel_consumed
 from global_map import acm_global_map, SpaceObject, Vector3D
 from orbital_mechanics import state_to_orbital_elements, orbital_elements_to_state, hohmann_transfer, circular_orbit_velocity
+from ground_track import subsatellite_point, terminator_line, predict_ground_track, historical_ground_track
+from conjunction_analysis import conjunctions_for_satellite
 from pydantic import BaseModel
 from typing import Optional
 import numpy as np
 import math
+import os
 
 app = FastAPI(title="Akashveer Telemetry Service")
 
@@ -345,6 +348,151 @@ async def execute_maneuver(request: ManeuverRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error executing maneuver: {str(e)}")
+
+
+# ========== GROUND TRACK & VISUALIZATION ENDPOINTS ==========
+
+@app.get("/api/ground-track")
+async def get_ground_track_data():
+    """Returns ground track map data for all satellites (Mercator projection)."""
+    features = []
+    
+    for sat_id, data in store.objects.items():
+        if data.get("type") != "SATELLITE":
+            continue
+        
+        try:
+            # Current sub-satellite point
+            current_track = subsatellite_point(data["pos"])
+            
+            # Predicted track (next 90 minutes)
+            predicted = predict_ground_track(data["pos"], data["vel"], duration_seconds=5400)
+            
+            # Historical track (last 90 minutes)
+            historical = historical_ground_track(data)
+            
+            features.append({
+                "satellite_id": sat_id,
+                "current_position": current_track,
+                "predicted_track": predicted,
+                "historical_track": historical,
+                "fuel_kg": data.get("fuel_kg", 0),
+                "altitude_km": current_track["alt_km"]
+            })
+        except Exception as e:
+            print(f"Error computing ground track for {sat_id}: {e}")
+    
+    # Terminator line (day/night boundary)
+    terminator = terminator_line(str(store.objects[list(store.objects.keys())[0]].get("timestamp", "")))
+    
+    return {
+        "satellites": features,
+        "terminator_line": terminator,
+        "timestamp": str(store.objects[list(store.objects.keys())[0]].get("timestamp", "")) if store.objects else ""
+    }
+
+
+@app.get("/api/conjunctions/{sat_id}")
+async def get_conjunctions(sat_id: str):
+    """Returns nearby debris for a satellite (Bullseye polar chart data)."""
+    
+    if sat_id not in store.objects:
+        raise HTTPException(status_code=404, detail=f"Satellite {sat_id} not found")
+    
+    sat_data = store.objects[sat_id]
+    if sat_data.get("type") != "SATELLITE":
+        raise HTTPException(status_code=400, detail=f"Object {sat_id} is not a satellite")
+    
+    try:
+        # Get all debris and other satellites
+        all_objects = {k: v for k, v in store.objects.items() if k != sat_id}
+        
+        conjunctions = conjunctions_for_satellite(sat_id, sat_data, all_objects)
+        
+        return {
+            "satellite_id": sat_id,
+            "conjunctions": conjunctions[:20],  # Top 20 closest approaches
+            "total_nearby": len(conjunctions),
+            "critical_count": len([c for c in conjunctions if c["risk_level"] == "red"]),
+            "warning_count": len([c for c in conjunctions if c["risk_level"] == "yellow"])
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error computing conjunctions: {str(e)}")
+
+
+@app.get("/api/telemetry-heatmap")
+async def get_telemetry_heatmap():
+    """Returns fleet-wide telemetry for heatmap visualization."""
+    satellites = []
+    
+    for sat_id, data in store.objects.items():
+        if data.get("type") != "SATELLITE":
+            continue
+        
+        try:
+            fuel_percent = (data.get("fuel_kg", 0) / 50.0) * 100  # Assume 50kg capacity
+            
+            # Calculate delta-V efficiency (mocked for now)
+            dv_budget = 2.5  # km/s budgeted
+            fuel_used = 50 - data.get("fuel_kg", 0)
+            isp = 300.0
+            g0 = 9.80665 / 1000
+            dv_spent = isp * g0 * math.log((1 + fuel_used/0.5) / 1)  # Approximation
+            
+            satellites.append({
+                "satellite_id": sat_id,
+                "fuel_kg": float(data.get("fuel_kg", 0)),
+                "fuel_percent": min(100, float(fuel_percent)),
+                "mass_kg": float(data.get("mass_kg", 0)),
+                "altitude_km": float(np.linalg.norm(data["pos"]) - 6378.137),
+                "dv_spent_kmps": float(dv_spent),
+                "dv_budget_kmps": 2.5,
+                "collisions_avoided": 0  # Would be tracked in real system
+            })
+        except Exception as e:
+            print(f"Error computing telemetry for {sat_id}: {e}")
+    
+    return {
+        "satellites": satellites,
+        "fleet_fuel_total_kg": float(sum(s["fuel_kg"] for s in satellites)),
+        "fleet_health_percent": float(np.mean([s["fuel_percent"] for s in satellites]) if satellites else 0)
+    }
+
+
+@app.get("/api/maneuver-timeline")
+async def get_maneuver_timeline():
+    """Returns past and future maneuver schedule (Gantt chart data)."""
+    # Mock timeline - in real system would query maneuver history database
+    timeline = [
+        {
+            "event_id": "burn-001",
+            "satellite_id": "SAT-001",
+            "event_type": "BURN_START",
+            "timestamp": "2026-03-20T12:00:00Z",
+            "duration_seconds": 30,
+            "dv_ms": 1500
+        },
+        {
+            "event_id": "burn-001-end",
+            "satellite_id": "SAT-001",
+            "event_type": "BURN_END",
+            "timestamp": "2026-03-20T12:00:30Z",
+            "duration_seconds": 0
+        },
+        {
+            "event_id": "cooldown-001",
+            "satellite_id": "SAT-001",
+            "event_type": "COOLDOWN",
+            "timestamp": "2026-03-20T12:00:30Z",
+            "duration_seconds": 600
+        }
+    ]
+    
+    return {
+        "maneuvers": timeline,
+        "upcoming_count": len([m for m in timeline if m["timestamp"] > "2026-03-20T00:00:00Z"]),
+        "conflicts": []  # Flag any overlaps
+    }
 
 
 # Serve frontend

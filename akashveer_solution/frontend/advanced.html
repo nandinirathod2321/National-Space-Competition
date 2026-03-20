@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Akashveer — Advanced Mission Dashboard</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <link rel="stylesheet" href="/static/styles.css">
+    <style>
+        * { scroll-behavior: smooth; }
+        
+        body { 
+            margin: 0; 
+            background: #05080f; 
+            color: #e4ecfa; 
+            font-family: 'Rajdhani', sans-serif;
+            overflow: hidden;
+        }
+        
+        /* Custom Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(0, 228, 255, 0.05);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #00e4ff, #7b2fff);
+            border-radius: 4px;
+            border: 2px solid rgba(0, 0, 0, 0.3);
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #00f0ff, #9b4fff);
+            box-shadow: 0 0 10px rgba(0, 228, 255, 0.5);
+        }
+        
+        /* Firefox */
+        * {
+            scrollbar-color: #00e4ff rgba(0, 228, 255, 0.1);
+            scrollbar-width: thin;
+        }
+        
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: auto 1fr 1fr;
+            gap: 12px;
+            height: 100vh;
+            padding: 12px;
+            background: #05080f;
+        }
+
+        .module-header {
+            grid-column: 1 / -1;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 16px;
+            background: linear-gradient(135deg, rgba(0,20,40,0.8), rgba(0,50,80,0.8));
+            border-bottom: 2px solid #00e4ff;
+            border-radius: 4px;
+            font-family: 'Orbitron', sans-serif;
+            box-shadow: 0 4px 12px rgba(0, 228, 255, 0.15);
+            animation: headerGlow 3s ease-in-out infinite;
+        }
+
+        @keyframes headerGlow {
+            0%, 100% { box-shadow: 0 4px 12px rgba(0, 228, 255, 0.15); }
+            50% { box-shadow: 0 4px 20px rgba(0, 228, 255, 0.35); }
+        }
+
+        .module-header h1 { 
+            margin: 0; 
+            color: #00e4ff; 
+            font-size: 1.8em;
+            text-shadow: 0 0 20px rgba(0, 228, 255, 0.5);
+        }
+        
+        .module-header .status { 
+            font-family: 'Share Tech Mono', monospace; 
+            font-size: 0.85em;
+            color: #7b8fbb;
+            letter-spacing: 1px;
+        }
+
+        .module {
+            background: rgba(8, 14, 30, 0.88);
+            border: 1px solid rgba(0, 200, 255, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .module:hover {
+            border-color: rgba(0, 228, 255, 0.5);
+            box-shadow: 0 8px 24px rgba(0, 228, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .module h2 {
+            margin: 0;
+            padding: 12px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.9em;
+            letter-spacing: 2px;
+            background: linear-gradient(90deg, rgba(0, 228, 255, 0.08), transparent);
+            border-bottom: 1px solid rgba(0, 200, 255, 0.3);
+            color: #00e4ff;
+            text-shadow: 0 0 10px rgba(0, 228, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+
+        .module:hover h2 {
+            background: linear-gradient(90deg, rgba(0, 228, 255, 0.15), transparent);
+            text-shadow: 0 0 15px rgba(0, 228, 255, 0.5);
+        }
+
+        .module-content {
+            flex: 1;
+            overflow: hidden;
+            position: relative;
+        }
+
+        /* Ground Track Map */
+        #map { height: 100%; width: 100%; }
+
+        /* Bullseye Chart */
+        #bullseye-canvas { width: 100%; height: 100%; display: block; }
+
+        /* Heatmap with smooth scroll */
+        .heatmap-container { 
+            padding: 12px; 
+            overflow-y: auto; 
+            height: 100%;
+            animation: scrollIn 0.4s ease-out;
+        }
+        
+        @keyframes scrollIn {
+            from { opacity: 0.7; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .fuel-bar { 
+            display: flex; 
+            align-items: center; 
+            gap: 8px; 
+            margin-bottom: 12px;
+            padding: 10px;
+            background: linear-gradient(135deg, rgba(0,228,255,0.05), rgba(123,47,255,0.05));
+            border-radius: 6px;
+            border: 1px solid rgba(0, 228, 255, 0.1);
+            font-size: 0.85em;
+            transition: all 0.3s ease;
+            cursor: default;
+            user-select: none;
+        }
+        
+        .fuel-bar:hover {
+            background: linear-gradient(135deg, rgba(0,228,255,0.1), rgba(123,47,255,0.1));
+            border-color: rgba(0, 228, 255, 0.3);
+            transform: translateX(4px);
+            box-shadow: 0 0 8px rgba(0, 228, 255, 0.2);
+        }
+        
+        .fuel-bar-label { 
+            min-width: 70px; 
+            color: #aaa;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        
+        .fuel-bar-fill {
+            flex: 1;
+            height: 20px;
+            background: linear-gradient(90deg, #ff3c5e, #ffca28, #4cff9f);
+            border-radius: 4px;
+            border: 1px solid rgba(255,255,255,0.15);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.4s ease;
+            box-shadow: 0 0 8px rgba(0, 228, 255, 0.2);
+        }
+        
+        .fuel-bar-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: shimmer 2s infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { left: -100%; }
+            50% { left: 100%; }
+            100% { left: 100%; }
+        }
+        
+        .fuel-bar:hover .fuel-bar-fill {
+            box-shadow: 0 0 12px rgba(0, 228, 255, 0.4);
+            transform: scaleY(1.1);
+        }
+        
+        .fuel-bar-value { 
+            min-width: 50px; 
+            text-align: right; 
+            color: #4cff9f; 
+            font-family: 'Share Tech Mono', monospace;
+            font-weight: 700;
+        }
+
+        /* Gantt Timer with enhanced scroll */
+        .gantt-container { 
+            padding: 12px; 
+            overflow-x: auto;
+            overflow-y: auto;
+            height: 100%;
+            animation: scrollIn 0.4s ease-out;
+        }
+        
+        .gantt-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: linear-gradient(90deg, rgba(0,0,0,0.2), rgba(0,228,255,0.02));
+            border-left: 3px solid rgba(0, 228, 255, 0.3);
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            cursor: default;
+        }
+        
+        .gantt-row:hover {
+            background: linear-gradient(90deg, rgba(0,0,0,0.3), rgba(0,228,255,0.08));
+            border-left-color: #00e4ff;
+            transform: translateX(4px);
+            box-shadow: 0 0 8px rgba(0, 228, 255, 0.2);
+        }
+        
+        .gantt-label { 
+            min-width: 80px; 
+            font-size: 0.85em; 
+            color: #7b8fbb;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        
+        .gantt-timeline {
+            flex: 1;
+            height: 28px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid rgba(0, 228, 255, 0.1);
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .gantt-block {
+            position: absolute;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7em;
+            border-radius: 3px;
+            color: white;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            letter-spacing: 0.5px;
+            box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+        }
+        
+        .gantt-block:hover {
+            filter: brightness(1.3);
+            box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+            transform: scaleY(1.15);
+        }
+        
+        .burn-block { 
+            background: linear-gradient(135deg, #ff6464, #ff4444);
+            border: 1px solid rgba(255, 100, 100, 0.5);
+        }
+        
+        .burn-block:hover {
+            background: linear-gradient(135deg, #ff7a7a, #ff5555);
+        }
+        
+        .cooldown-block { 
+            background: linear-gradient(135deg, #ffa500, #ff8c00);
+            border: 1px solid rgba(255, 165, 0, 0.5);
+        }
+        
+        .cooldown-block:hover {
+            background: linear-gradient(135deg, #ffb826, #ff9a1a);
+        }
+
+        @media (max-width: 1400px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 1fr 1fr 1fr 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="module-header">
+        <h1>⚡ AKASHVEER ADVANCED MISSION CONTROL</h1>
+        <div class="status">
+            <span id="status-sats">0 Satellites</span> | 
+            <span id="status-debris">0 Objects</span> | 
+            <span id="status-time">T+00:00:00</span>
+        </div>
+    </div>
+
+    <!-- Dashboard Grid -->
+    <div class="dashboard-grid">
+        <!-- 1. GROUND TRACK MAP (Mercator Projection) -->
+        <div class="module" style="grid-column: 1; grid-row: 2 / 4;">
+            <h2>📍 GROUND TRACK MAP (Mercator)</h2>
+            <div class="module-content">
+                <div id="map"></div>
+            </div>
+        </div>
+
+        <!-- 2. BULLSEYE CONJUNCTION CHART (Polar) -->
+        <div class="module" style="grid-column: 2; grid-row: 2;">
+            <h2>🎯 CONJUNCTION BULLSEYE CHART</h2>
+            <div class="module-content">
+                <canvas id="bullseye-canvas"></canvas>
+            </div>
+        </div>
+
+        <!-- 3. TELEMETRY HEATMAP -->
+        <div class="module" style="grid-column: 2; grid-row: 3;">
+            <h2>🔥 TELEMETRY & RESOURCE HEATMAP</h2>
+            <div class="module-content">
+                <div class="heatmap-container" id="heatmap-container"></div>
+            </div>
+        </div>
+
+        <!-- 4. MANEUVER TIMELINE (Gantt) -->
+        <div class="module" style="grid-column: 1 / -1; grid-row: 4;">
+            <h2>📅 MANEUVER TIMELINE (Gantt Scheduler)</h2>
+            <div class="module-content">
+                <div class="gantt-container" id="gantt-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LIBRARIES -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="/static/advanced-dashboard.js"></script>
+</body>
+</html>
