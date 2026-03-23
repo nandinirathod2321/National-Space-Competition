@@ -14,6 +14,17 @@ const EARTH_R = EARTH_RADIUS * SCALE;    // ~6.378 units
 const SAT_SCALE = 0.06;
 const DEBRIS_SCALE = 0.03;
 
+// ---------- UTILITY FUNCTIONS ----------
+function subsatellitePoint(pos) {
+    // pos = [x, y, z] in km (ECI)
+    const [x, y, z] = pos;
+    const r = Math.sqrt(x * x + y * y + z * z);
+    const lat = Math.asin(z / r) * 180 / Math.PI;
+    const lon = Math.atan2(y, x) * 180 / Math.PI;
+    const alt = r - EARTH_RADIUS;
+    return { lat, lon, alt_km: alt };
+}
+
 // ---------- STATE ----------
 let scene, camera, renderer, controls, earthGroup, starField;
 let clock = new THREE.Clock();
@@ -106,30 +117,26 @@ function createEarth() {
     setLoadProgress(30, 'Generating Earth model...');
 
     earthGroup = new THREE.Group();
-
-    // Earth sphere geometry
     const earthGeo = new THREE.SphereGeometry(EARTH_R, 64, 64);
 
-    // Load high-res earth textures from unpkg CDN
     const textureLoader = new THREE.TextureLoader();
-    const earthColorMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg');
-    const earthBumpMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-topology.png');
-    const earthWaterMap = textureLoader.load('https://unpkg.com/three-globe/example/img/earth-water.png');
+    textureLoader.setCrossOrigin('anonymous');
 
+    // Create material immediately with fallback color
     const earthMat = new THREE.MeshPhongMaterial({
-        map: earthColorMap,
-        bumpMap: earthBumpMap,
-        bumpScale: 0.15,
-        specularMap: earthWaterMap,
-        specular: new THREE.Color(0x333333),
+        color: 0x003366,
+        emissive: 0x002244,
         shininess: 25,
+        specular: new THREE.Color(0x333333),
+        flatShading: true,
     });
+
     const earthMesh = new THREE.Mesh(earthGeo, earthMat);
-    // Align prime meridian correctly (optional depending on use case)
+    earthMesh.name = 'earth-sphere';
     earthMesh.rotation.y = -Math.PI / 2;
     earthGroup.add(earthMesh);
 
-    // Atmosphere glow
+    // Atmosphere
     const atmosGeo = new THREE.SphereGeometry(EARTH_R * 1.015, 64, 64);
     const atmosMat = new THREE.MeshBasicMaterial({
         color: 0x44bbff,
@@ -139,7 +146,7 @@ function createEarth() {
     });
     earthGroup.add(new THREE.Mesh(atmosGeo, atmosMat));
 
-    // Outer glow
+    // Glow
     const glowGeo = new THREE.SphereGeometry(EARTH_R * 1.06, 64, 64);
     const glowMat = new THREE.MeshBasicMaterial({
         color: 0x2288ff,
@@ -157,6 +164,24 @@ function createEarth() {
     earthGroup.add(eqMesh);
 
     scene.add(earthGroup);
+
+    // Load textures asynchronously
+    textureLoader.load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg', (tex) => {
+        earthMat.map = tex;
+        earthMat.color.setHex(0xffffff);
+        earthMat.emissive.setHex(0x000000);
+        earthMat.flatShading = false;
+        earthMat.needsUpdate = true;
+    });
+    textureLoader.load('https://unpkg.com/three-globe/example/img/earth-topology.png', (tex) => {
+        earthMat.bumpMap = tex;
+        earthMat.bumpScale = 0.15;
+        earthMat.needsUpdate = true;
+    });
+    textureLoader.load('https://unpkg.com/three-globe/example/img/earth-water.png', (tex) => {
+        earthMat.specularMap = tex;
+        earthMat.needsUpdate = true;
+    });
 }
 
 // ============================================================
@@ -185,7 +210,55 @@ function createStarField() {
     const mat = new THREE.PointsMaterial({ size: 0.4, vertexColors: true, transparent: true, opacity: 0.7 });
     starField = new THREE.Points(geo, mat);
     scene.add(starField);
+
+    createPlanets();
 }
+
+function createPlanets() {
+    // Add Mars and Moon to background
+    const moonGeo = new THREE.SphereGeometry(EARTH_R * 0.27, 32, 32);
+    const moonMat = new THREE.MeshPhongMaterial({ color: 0xcccccc, shininess: 5 });
+    const moon = new THREE.Mesh(moonGeo, moonMat);
+    moon.position.set(EARTH_R * 30, EARTH_R * 10, -EARTH_R * 20); // Far away
+    scene.add(moon);
+    
+    const marsGeo = new THREE.SphereGeometry(EARTH_R * 0.53, 32, 32);
+    const marsMat = new THREE.MeshPhongMaterial({ color: 0xff4422, shininess: 5 });
+    const mars = new THREE.Mesh(marsGeo, marsMat);
+    mars.position.set(-EARTH_R * 40, -EARTH_R * 5, -EARTH_R * 10); // Far away differently
+    scene.add(mars);
+
+    // Add Jupiter
+    const jupiterGeo = new THREE.SphereGeometry(EARTH_R * 2.5, 32, 32);
+    const jupiterMat = new THREE.MeshPhongMaterial({ color: 0xd8ca9d, shininess: 5 });
+    const jupiter = new THREE.Mesh(jupiterGeo, jupiterMat);
+    jupiter.position.set(EARTH_R * 80, EARTH_R * 30, -EARTH_R * 50);
+    scene.add(jupiter);
+
+    // Add Venus
+    const venusGeo = new THREE.SphereGeometry(EARTH_R * 0.95, 32, 32);
+    const venusMat = new THREE.MeshPhongMaterial({ color: 0xffd700, shininess: 5 });
+    const venus = new THREE.Mesh(venusGeo, venusMat);
+    venus.position.set(-EARTH_R * 25, EARTH_R * 15, EARTH_R * 20);
+    scene.add(venus);
+
+    // Add some distant asteroids
+    for (let i = 0; i < 20; i++) {
+        const asteroidGeo = new THREE.SphereGeometry(Math.random() * 0.5 + 0.2, 8, 8);
+        const asteroidMat = new THREE.MeshPhongMaterial({ color: 0x666666, shininess: 1 });
+        const asteroid = new THREE.Mesh(asteroidGeo, asteroidMat);
+        const distance = EARTH_R * (60 + Math.random() * 40);
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.acos(2 * Math.random() - 1);
+        asteroid.position.set(
+            distance * Math.sin(phi) * Math.cos(theta),
+            distance * Math.sin(phi) * Math.sin(theta),
+            distance * Math.cos(phi)
+        );
+        scene.add(asteroid);
+    }
+}
+
 
 // ============================================================
 //  LIGHTING
@@ -224,6 +297,10 @@ function createGrid() {
 // ============================================================
 function initPixiHUD() {
     setLoadProgress(65, 'Initializing Pixi.js HUD...');
+    if (typeof PIXI === 'undefined') {
+        console.warn('PIXI.js not loaded, HUD overlay disabled');
+        return;
+    }
     const hudEl = document.getElementById('hud-overlay');
     const w = hudEl.clientWidth;
     const h = hudEl.clientHeight;
@@ -308,36 +385,49 @@ function eciToScene(pos) {
 
 function createObjectMesh(obj) {
     const isSat = obj.type === 'SATELLITE';
-    const color = isSat ? 0x00e4ff : 0xff6a3c;
+    const color = isSat ? 0x4a7fa5 : 0xff6a3c;
     const size = isSat ? SAT_SCALE : DEBRIS_SCALE;
 
-    // Glow point
-    const geo = isSat
-        ? new THREE.OctahedronGeometry(size, 1)
-        : new THREE.TetrahedronGeometry(size, 0);
-    const mat = new THREE.MeshPhongMaterial({
-        color,
-        emissive: color,
-        emissiveIntensity: 0.8,
-        transparent: true,
-        opacity: 0.95,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Group();
 
-    // Outer glow sprite
-    const spriteMat = new THREE.SpriteMaterial({
-        color,
-        transparent: true,
-        opacity: 0.3,
-        blending: THREE.AdditiveBlending,
-    });
-    const sprite = new THREE.Sprite(spriteMat);
-    sprite.scale.set(size * 5, size * 5, 1);
-    mesh.add(sprite);
+    if (isSat) {
+        // Main body with tiny highlight dot (reflection)
+        const bodyGeo = new THREE.BoxGeometry(size * 1.5, size * 1.5, size * 1.5);
+        const bodyMat = new THREE.MeshPhongMaterial({
+            color: color,
+            emissive: 0xffffff,
+            emissiveIntensity: 0.2, // Tiny dot reflection
+            shininess: 100,
+            specular: 0xffffff
+        });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        mesh.add(body);
+
+        // Solar panels (arms)
+        const panelGeo = new THREE.BoxGeometry(size * 6, size * 0.2, size * 2);
+        const panelMat = new THREE.MeshPhongMaterial({
+            color: 0x224466,
+            emissive: 0x112233,
+            emissiveIntensity: 0.5,
+            side: THREE.DoubleSide
+        });
+        const panels = new THREE.Mesh(panelGeo, panelMat);
+        mesh.add(panels);
+    } else {
+        const geo = new THREE.TetrahedronGeometry(size, 0);
+        const mat = new THREE.MeshPhongMaterial({
+            color,
+            emissive: color,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.95,
+        });
+        mesh.add(new THREE.Mesh(geo, mat));
+    }
 
     const pos3 = eciToScene(obj.pos);
     mesh.position.copy(pos3);
-    mesh.userData = { id: obj.id, type: obj.type };
+    mesh.userData = { id: obj.id, type: obj.type, isSat };
 
     scene.add(mesh);
     objectMeshes[obj.id] = mesh;
@@ -371,13 +461,13 @@ const orbitTrails = {};
 function updateOrbitTrail(obj) {
     if (!orbitTrails[obj.id]) {
         const isSat = obj.type === 'SATELLITE';
-        const color = isSat ? 0x00e4ff : 0xff6a3c;
-        const maxPoints = 200;
+        const color = isSat ? 0xC4956A : 0xff6a3c; // Warm amber for tracking
+        const maxPoints = isSat ? 15 : 10;
         const geo = new THREE.BufferGeometry();
         const positions = new Float32Array(maxPoints * 3);
         geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         geo.setDrawRange(0, 0);
-        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.25 });
+        const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.4 });
         const line = new THREE.Line(geo, mat);
         scene.add(line);
         orbitTrails[obj.id] = { line, points: [], maxPoints };
@@ -432,26 +522,57 @@ function selectObject(id) {
 
     // Highlight mesh
     Object.entries(objectMeshes).forEach(([oid, mesh]) => {
-        if (oid === id) {
-            mesh.material.emissiveIntensity = 1.5;
+        if (mesh.userData.id === id) {
+            mesh.children.forEach(c => {
+                if (c.material && c.material.emissiveIntensity !== undefined) {
+                    c.material.emissiveIntensity = 1.0;
+                }
+            });
             mesh.scale.set(1.5, 1.5, 1.5);
         } else {
-            mesh.material.emissiveIntensity = 0.8;
+            mesh.children.forEach(c => {
+                if (c.material && c.material.emissiveIntensity !== undefined) {
+                    c.material.emissiveIntensity = mesh.userData.isSat ? 0.2 : 0.5;
+                }
+            });
             mesh.scale.set(1, 1, 1);
         }
     });
 
     updateDetailPanel(id);
+    
+    // Update orbits if enabled
+    if (showOrbits) {
+        drawAllOrbits();
+    }
+    
+    // Highlight in coordinates panel and scroll to it
+    document.querySelectorAll('.coord-item').forEach(el => el.classList.remove('selected'));
+    const coordEl = document.querySelector(`.coord-item[data-id="${id}"]`);
+    if (coordEl) {
+        coordEl.classList.add('selected');
+        coordEl.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
 }
 
 function deselectObject() {
     selectedObjectId = null;
     Object.values(objectMeshes).forEach(mesh => {
-        mesh.material.emissiveIntensity = 0.8;
+        mesh.children.forEach(c => {
+            if (c.material && c.material.emissiveIntensity !== undefined) {
+                c.material.emissiveIntensity = mesh.userData.isSat ? 0.2 : 0.5;
+            }
+        });
         mesh.scale.set(1, 1, 1);
     });
     document.querySelectorAll('.obj-list-item').forEach(el => el.classList.remove('selected'));
+    document.querySelectorAll('.coord-item').forEach(el => el.classList.remove('selected'));
     document.getElementById('object-detail').innerHTML = '<p class="detail-placeholder">Click an object in the 3D view to inspect</p>';
+    
+    // Clear orbits when nothing is selected
+    if (showOrbits) {
+        drawAllOrbits();
+    }
 }
 
 function updateDashboardStats(status, stateData) {
@@ -471,30 +592,10 @@ function updateDashboardStats(status, stateData) {
     document.getElementById('fuel-bar-fill').style.width = Math.min(100, (fuel / (sats * 50 || 1)) * 100) + '%';
 }
 
-function updateDetailPanel(id) {
-    const obj = objectData[id];
-    if (!obj) return;
-
-    const isSat = obj.type === 'SATELLITE';
-    const typeClass = isSat ? 'type-sat' : 'type-debris';
-    const r = Math.sqrt(obj.pos[0] ** 2 + obj.pos[1] ** 2 + obj.pos[2] ** 2);
-    const alt = r - EARTH_RADIUS;
-    const speed = Math.sqrt(obj.vel[0] ** 2 + obj.vel[1] ** 2 + obj.vel[2] ** 2);
-
-    document.getElementById('object-detail').innerHTML = `
-        <div class="detail-id">${obj.id}</div>
-        <div class="detail-row"><span class="detail-key">TYPE</span><span class="detail-val ${typeClass}">${obj.type}</span></div>
-        <div class="detail-row"><span class="detail-key">ALTITUDE</span><span class="detail-val">${alt.toFixed(2)} km</span></div>
-        <div class="detail-row"><span class="detail-key">SPEED</span><span class="detail-val">${speed.toFixed(4)} km/s</span></div>
-        <div class="detail-row"><span class="detail-key">POS X</span><span class="detail-val">${obj.pos[0].toFixed(3)} km</span></div>
-        <div class="detail-row"><span class="detail-key">POS Y</span><span class="detail-val">${obj.pos[1].toFixed(3)} km</span></div>
-        <div class="detail-row"><span class="detail-key">POS Z</span><span class="detail-val">${obj.pos[2].toFixed(3)} km</span></div>
-        <div class="detail-row"><span class="detail-key">VEL X</span><span class="detail-val">${obj.vel[0].toFixed(5)} km/s</span></div>
-        <div class="detail-row"><span class="detail-key">VEL Y</span><span class="detail-val">${obj.vel[1].toFixed(5)} km/s</span></div>
-        <div class="detail-row"><span class="detail-key">VEL Z</span><span class="detail-val">${obj.vel[2].toFixed(5)} km/s</span></div>
-        ${isSat ? `<div class="detail-row"><span class="detail-key">FUEL</span><span class="detail-val" style="color:var(--fuel-color)">${obj.fuel_kg.toFixed(2)} kg</span></div>` : ''}
-        ${isSat ? `<div class="detail-row"><span class="detail-key">MASS</span><span class="detail-val">${obj.mass_kg.toFixed(2)} kg</span></div>` : ''}
-    `;
+// updateDetailPanel() exists later with orbit + maneuver details.
+// This placeholder must not duplicate name if the real function exists below.
+function updateDetailPanelSync(id) {
+    // No-op; the full updateDetailPanel is defined later.
 }
 
 // ============================================================
@@ -522,6 +623,35 @@ function renderObjectList() {
     }).join('');
 
     listEl.querySelectorAll('.obj-list-item').forEach(el => {
+        el.addEventListener('click', () => selectObject(el.dataset.id));
+    });
+}
+
+function updateCoordinatesDisplay() {
+    const displayEl = document.getElementById('coordinates-display');
+    const ids = Object.keys(objectData);
+    if (ids.length === 0) {
+        displayEl.innerHTML = '<p class="detail-placeholder">No objects tracked</p>';
+        return;
+    }
+
+    const coords = ids.map(id => {
+        const obj = objectData[id];
+        const coords = subsatellitePoint(obj.pos);
+        const isSat = obj.type === 'SATELLITE';
+        const sel = id === selectedObjectId ? 'selected' : '';
+        return `<div class="coord-item ${sel}" data-id="${id}">
+            <span class="coord-name">${id}</span>
+            <span class="coord-type">${isSat ? 'SAT' : 'DBR'}</span>
+            <span class="coord-lat">Lat: ${coords.lat.toFixed(2)}°</span>
+            <span class="coord-lon">Lon: ${coords.lon.toFixed(2)}°</span>
+            <span class="coord-alt">Alt: ${coords.alt_km.toFixed(0)} km</span>
+        </div>`;
+    }).join('');
+
+    displayEl.innerHTML = coords;
+
+    displayEl.querySelectorAll('.coord-item').forEach(el => {
         el.addEventListener('click', () => selectObject(el.dataset.id));
     });
 }
@@ -638,11 +768,20 @@ async function syncState() {
             }
         }
         renderObjectList();
+        updateCoordinatesDisplay();
         if (selectedObjectId) updateDetailPanel(selectedObjectId);
     }
 
     if (statusData) {
         updateDashboardStats(statusData, stateData);
+        
+        // Handle debris warning feature based on calculated global threshold
+        const warningEl = document.getElementById('debris-warning');
+        if (statusData.critical_warnings > 0) {
+            if (warningEl) warningEl.style.display = 'block';
+        } else {
+            if (warningEl) warningEl.style.display = 'none';
+        }
     }
 
     if (orbitsData && orbitsData.orbits) {
@@ -663,10 +802,12 @@ function drawAllOrbits() {
     });
     orbitMeshes = {};
 
-    // Draw new orbits
-    for (const [satId, elements] of Object.entries(orbitalData)) {
-        if (elements && elements.a) {
-            drawOrbit(satId, elements);
+    // Only draw orbit for the currently selected object if it's a satellite
+    if (selectedObjectId) {
+        const obj = objectData[selectedObjectId];
+        const elements = orbitalData[selectedObjectId];
+        if (elements && elements.a && obj && obj.type === 'SATELLITE') {
+            drawOrbit(selectedObjectId, elements);
         }
     }
 }
@@ -725,18 +866,17 @@ function drawOrbit(satId, elements) {
     const geometry = new THREE.BufferGeometry();
     geometry.setFromPoints(points);
 
-    // Color based on satellite
-    const hue = (satId.charCodeAt(0) * 123) % 360;
-    const color = new THREE.Color(`hsl(${hue}, 80%, 60%)`);
-
-    const material = new THREE.LineBasicMaterial({
-        color: color,
+    const material = new THREE.LineDashedMaterial({
+        color: 0x6B8FA3,   // subdued
         transparent: true,
-        opacity: 0.4,
-        linewidth: 1.5,
+        opacity: 0.35,
+        linewidth: 1,
+        dashSize: 250,
+        gapSize: 150
     });
 
     const orbit = new THREE.Line(geometry, material);
+    orbit.computeLineDistances();
     scene.add(orbit);
     orbitMeshes[satId] = orbit;
 }
@@ -771,6 +911,20 @@ function updateDetailPanel(id) {
         `;
     }
 
+    // Get metadata
+    const metadata = obj.metadata || {};
+    const metadataDetails = metadata.name || metadata.norad_id || metadata.country || metadata.launch_date ? `
+        <div class="detail-section">
+            <h4>Object Information</h4>
+            ${metadata.name ? `<div class="detail-row"><span class="detail-key">NAME</span><span class="detail-val">${metadata.name}</span></div>` : ''}
+            ${metadata.norad_id ? `<div class="detail-row"><span class="detail-key">NORAD ID</span><span class="detail-val">${metadata.norad_id}</span></div>` : ''}
+            ${metadata.country ? `<div class="detail-row"><span class="detail-key">COUNTRY</span><span class="detail-val">${metadata.country}</span></div>` : ''}
+            ${metadata.launch_date ? `<div class="detail-row"><span class="detail-key">LAUNCH</span><span class="detail-val">${metadata.launch_date}</span></div>` : ''}
+            ${metadata.rcs_size ? `<div class="detail-row"><span class="detail-key">RCS SIZE</span><span class="detail-val">${metadata.rcs_size}</span></div>` : ''}
+            ${metadata.classification ? `<div class="detail-row"><span class="detail-key">CLASS</span><span class="detail-val">${metadata.classification}</span></div>` : ''}
+        </div>
+    ` : '';
+
     const maneuverPanel = isSat ? `
         <div class="detail-section">
             <h4>Orbital Maneuver</h4>
@@ -796,6 +950,7 @@ function updateDetailPanel(id) {
         <div class="detail-row"><span class="detail-key">VEL Z</span><span class="detail-val">${obj.vel[2].toFixed(5)} km/s</span></div>
         ${isSat ? `<div class="detail-row"><span class="detail-key">FUEL</span><span class="detail-val" style="color:var(--fuel-color)">${obj.fuel_kg.toFixed(2)} kg</span></div>` : ''}
         ${isSat ? `<div class="detail-row"><span class="detail-key">MASS</span><span class="detail-val">${obj.mass_kg.toFixed(2)} kg</span></div>` : ''}
+        ${metadataDetails}
         ${orbitalDetails}
         ${maneuverPanel}
     `;
@@ -995,15 +1150,15 @@ function updateClock() {
 // ============================================================
 function setupControls() {
     // Toggle orbits
-    document.getElementById('btn-toggle-grid').addEventListener('click', () => {
+    document.getElementById('btn-toggle-orbits').addEventListener('click', () => {
         showOrbits = !showOrbits;
         if (showOrbits) {
             drawAllOrbits();
-            addLog('Orbits displayed', 'info');
+            addLog('Orbits enabled', 'info');
         } else {
             Object.values(orbitMeshes).forEach(mesh => scene.remove(mesh));
             orbitMeshes = {};
-            addLog('Orbits hidden', 'info');
+            addLog('Orbits disabled', 'info');
         }
     });
 
@@ -1013,7 +1168,7 @@ function setupControls() {
         const result = await postTick(dt);
         if (result) {
             tickCount++;
-            addLog(`Tick ${tickCount}: Propagated ${result.new_states_count} objects (Δt=${dt}s)`, 'success');
+            addLog(`Simulation progressed by ${dt}s`, 'info');
             await syncState();
         } else {
             addLog('Tick failed — is the backend running?', 'danger');
@@ -1051,39 +1206,39 @@ function setupControls() {
 
     // Slider labels
     document.getElementById('dt-slider').addEventListener('input', (e) => {
-        document.getElementById('dt-value').textContent = parseFloat(e.target.value).toFixed(1) + 's';
+        document.getElementById('dt-display').textContent = parseFloat(e.target.value).toFixed(1) + 's';
     });
     document.getElementById('interval-slider').addEventListener('input', (e) => {
-        document.getElementById('interval-value').textContent = e.target.value + 'ms';
+        document.getElementById('interval-display').textContent = e.target.value + 'ms';
     });
 
-    // Demo inject
-    document.getElementById('btn-inject-demo').addEventListener('click', async () => {
-        const payload = generateDemoPayload();
-        const result = await postTelemetry(payload);
-        if (result) {
-            addLog(`Demo injected: ${result.processed_count} objects | CDM warnings: ${result.active_cdm_warnings}`, 'success');
-            document.getElementById('stat-warnings').textContent = result.active_cdm_warnings;
-            await syncState();
-        } else {
-            addLog('Injection failed — is the backend running?', 'danger');
-        }
-    });
+    // Demo inject - buttons not in HTML, skip for now
+    // document.getElementById('btn-inject-demo').addEventListener('click', async () => {
+    //     const payload = generateDemoPayload();
+    //     const result = await postTelemetry(payload);
+    //     if (result) {
+    //         addLog(`Demo injected: ${result.processed_count} objects | CDM warnings: ${result.active_cdm_warnings}`, 'success');
+    //         // document.getElementById('stat-warnings').textContent = result.active_cdm_warnings; // not in HTML
+    //         await syncState();
+    //     } else {
+    //         addLog('Injection failed — is the backend running?', 'danger');
+    //     }
+    // });
 
-    // Collision inject
-    document.getElementById('btn-inject-collision').addEventListener('click', async () => {
-        const payload = generateCollisionPayload();
-        const result = await postTelemetry(payload);
-        if (result) {
-            addLog(`⚠️ COLLISION scenario injected! CDM warnings: ${result.active_cdm_warnings}`, 'danger');
-            document.getElementById('stat-warnings').textContent = result.active_cdm_warnings;
-            const warnFill = Math.min(100, result.active_cdm_warnings * 20);
-            document.getElementById('warn-bar-fill').style.width = warnFill + '%';
-            await syncState();
-        } else {
-            addLog('Injection failed — is the backend running?', 'danger');
-        }
-    });
+    // Collision inject - buttons not in HTML, skip for now
+    // document.getElementById('btn-inject-collision').addEventListener('click', async () => {
+    //     const payload = generateCollisionPayload();
+    //     const result = await postTelemetry(payload);
+    //     if (result) {
+    //         addLog(`⚠️ COLLISION scenario injected! CDM warnings: ${result.active_cdm_warnings}`, 'danger');
+    //         // document.getElementById('stat-warnings').textContent = result.active_cdm_warnings; // not in HTML
+    //         // const warnFill = Math.min(100, result.active_cdm_warnings * 20);
+    //         // document.getElementById('warn-bar-fill').style.width = warnFill + '%'; // not in HTML
+    //         await syncState();
+    //     } else {
+    //         addLog('Injection failed — is the backend running?', 'danger');
+    //     }
+    // });
 
     // Clear log
     document.getElementById('btn-clear-log').addEventListener('click', () => {
@@ -1094,19 +1249,68 @@ function setupControls() {
     document.getElementById('btn-toggle-grid').addEventListener('click', () => {
         showGrid = !showGrid;
         if (gridHelper) gridHelper.visible = showGrid;
+        document.getElementById('btn-toggle-grid').classList.toggle('active', showGrid);
     });
 
     // Toggle labels
     document.getElementById('btn-toggle-labels').addEventListener('click', () => {
         showLabels = !showLabels;
+        document.getElementById('btn-toggle-labels').classList.toggle('active', showLabels);
+    });
+
+    // Toggle orbits
+    document.getElementById('btn-toggle-orbits').addEventListener('click', () => {
+        showOrbits = !showOrbits;
+        document.getElementById('btn-toggle-orbits').classList.toggle('active', showOrbits);
+        if (showOrbits) {
+            drawAllOrbits();
+            addLog('Orbits enabled', 'info');
+        } else {
+            Object.values(orbitMeshes).forEach(mesh => scene.remove(mesh));
+            orbitMeshes = {};
+            addLog('Orbits disabled', 'info');
+        }
+    });
+
+    // Refresh data
+    document.getElementById('btn-refresh-data').addEventListener('click', async () => {
+        addLog('Refreshing data...', 'info');
+        try {
+            const response = await fetch(`${API_BASE}/api/reload-data`, { method: 'POST' });
+            if (response.ok) {
+                addLog('Data refreshed successfully', 'success');
+                setTimeout(() => syncState(), 1000);
+            } else {
+                addLog('Failed to refresh data', 'error');
+            }
+        } catch (error) {
+            addLog('Error refreshing data: ' + error.message, 'error');
+        }
+    });
+
+    // System info
+    document.getElementById('btn-system-info').addEventListener('click', async () => {
+        try {
+            const response = await fetch(`${API_BASE}/api/status`);
+            if (response.ok) {
+                const status = await response.json();
+                addLog(`System: ${status.status}, Objects: ${status.object_count}, Uptime: ${status.uptime_seconds}s`, 'info');
+            } else {
+                addLog('Failed to get system status', 'error');
+            }
+        } catch (error) {
+            addLog('Error getting system info: ' + error.message, 'error');
+        }
     });
 
     // Fullscreen
     document.getElementById('btn-fullscreen').addEventListener('click', () => {
         if (!document.fullscreenElement) {
             document.documentElement.requestFullscreen();
+            document.getElementById('btn-fullscreen').classList.add('active');
         } else {
             document.exitFullscreen();
+            document.getElementById('btn-fullscreen').classList.remove('active');
         }
     });
 
@@ -1145,28 +1349,86 @@ async function boot() {
         // Periodic sync
         setInterval(syncState, 5000);
 
-        setLoadProgress(100, 'System ready.');
+        setLoadProgress(100, 'System ready. Awaiting connection sequence...');
 
-        // Fade out loading screen
-        setTimeout(() => {
-            loadingScreen.style.transition = 'opacity 0.8s ease';
-            loadingScreen.style.opacity = '0';
-            appDiv.style.opacity = '1';
+        // Enable Space-Mode button instead of auto-fading
+        const spaceBtn = document.getElementById('btn-space-mode');
+        if (spaceBtn) {
+            spaceBtn.disabled = false;
+            spaceBtn.textContent = 'SPACE-MODE';
             
-            // Force a resize after reveal to ensure canvases fit perfectly
-            setTimeout(() => {
-                loadingScreen.style.display = 'none';
-                onResize();
-            }, 800);
-        }, 600);
+            spaceBtn.addEventListener('click', () => {
+                spaceBtn.textContent = 'LAUNCHING...';
+                loadingScreen.style.transition = 'opacity 0.8s ease';
+                loadingScreen.style.opacity = '0';
+                appDiv.style.opacity = '1';
+                
+                // Force a resize after reveal to ensure canvases fit perfectly
+                setTimeout(() => {
+                    loadingScreen.style.display = 'none';
+                    onResize();
+                }, 800);
+            });
+        }
 
-        addLog('Dashboard initialized. Backend connected.', 'info');
-        addLog('Load a demo scenario to begin tracking objects.', 'info');
+        addLog('Mission control initialized. Uplink stable.', 'info');
+        addLog('Telemetry received: Initial state synced.', 'info');
     } catch (err) {
         console.error('Boot error:', err);
         setLoadProgress(100, `Error: ${err.message}`);
+        showErrorOnScreen(err);
+        forceFinishLoading();
     }
 }
+
+function showErrorOnScreen(err) {
+    const errEl = document.createElement('div');
+    errEl.style.cssText = 'position: fixed; bottom: 10px; left: 10px; right: 10px; background: rgba(255,0,0,0.8); color: white; padding: 10px; border-radius: 4px; z-index: 10000; font-family: monospace; font-size: 0.9rem;';
+    errEl.textContent = `Startup error: ${err.message}`;
+    document.body.appendChild(errEl);
+    setTimeout(() => errEl.remove(), 15000);
+}
+
+function forceFinishLoading() {
+    loadingScreen.style.display = 'none';
+    appDiv.style.opacity = '1';
+}
+
+window.addEventListener('error', (event) => {
+    console.error('Global error caught:', event.error || event.message);
+    setLoadProgress(100, `JS error: ${event.error ? event.error.message : event.message}`);
+    showErrorOnScreen(event.error || new Error(event.message));
+    forceFinishLoading();
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled promise rejection:', event.reason);
+    setLoadProgress(100, `Promise error: ${event.reason}`);
+    showErrorOnScreen(event.reason instanceof Error ? event.reason : new Error(String(event.reason)));
+    forceFinishLoading();
+});
+
+// Safety fallback: enable button after 8s if still loading
+setTimeout(() => {
+    if (loadingScreen.style.display !== 'none' && loadingScreen.style.opacity !== '0') {
+        const spaceBtn = document.getElementById('btn-space-mode');
+        if (spaceBtn && spaceBtn.disabled) {
+            spaceBtn.disabled = false;
+            spaceBtn.textContent = 'SPACE-MODE (FORCE LAUNCH)';
+            spaceBtn.addEventListener('click', () => {
+                spaceBtn.textContent = 'LAUNCHING...';
+                loadingScreen.style.transition = 'opacity 0.8s ease';
+                loadingScreen.style.opacity = '0';
+                appDiv.style.opacity = '1';
+                setTimeout(() => {
+                    loadingScreen.style.display = 'none';
+                    onResize();
+                }, 800);
+            });
+            addLog('Loading timeout fallback applied to button', 'warn');
+        }
+    }
+}, 8000);
 
 // Go!
 boot();

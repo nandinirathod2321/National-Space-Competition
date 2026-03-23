@@ -221,6 +221,47 @@ def circular_orbit_velocity(altitude_km):
     return math.sqrt(MU / r)
 
 
+def mean_anomaly_to_true_anomaly(M, e, tol=1e-8, max_iter=100):
+    """
+    Converts mean anomaly to true anomaly using Kepler's equation.
+    
+    Args:
+        M: Mean anomaly (rad)
+        e: Eccentricity
+        tol: Tolerance for convergence
+        max_iter: Maximum iterations
+    
+    Returns:
+        True anomaly (rad)
+    """
+    # Initial guess for eccentric anomaly
+    E = M if e < 0.8 else math.pi
+    
+    for _ in range(max_iter):
+        # Kepler's equation: M = E - e * sin(E)
+        f = E - e * math.sin(E) - M
+        f_prime = 1 - e * math.cos(E)
+        
+        delta = f / f_prime
+        E -= delta
+        
+        if abs(delta) < tol:
+            break
+    
+    # True anomaly from eccentric anomaly
+    cos_E = math.cos(E)
+    sin_E = math.sin(E)
+    
+    cos_v = (cos_E - e) / (1 - e * cos_E)
+    sin_v = (math.sqrt(1 - e**2) * sin_E) / (1 - e * cos_E)
+    
+    v = math.atan2(sin_v, cos_v)
+    if v < 0:
+        v += 2 * math.pi
+    
+    return v
+
+
 def orbit_altitude_from_period(period_seconds):
     """Calculates orbital altitude from period using Kepler's 3rd law."""
     a = (MU * (period_seconds**2) / (4 * math.pi**2)) ** (1/3)

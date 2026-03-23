@@ -60,6 +60,24 @@ async function updateGroundTrackMap() {
             }
         }
 
+        function getSplitCoords(track) {
+            const lines = [];
+            let currentLine = [];
+            for (let i = 0; i < track.length; i++) {
+                const point = track[i];
+                if (i > 0) {
+                    const prev = track[i-1];
+                    if (Math.abs(point.longitude - prev.longitude) > 180) {
+                        lines.push(currentLine);
+                        currentLine = [];
+                    }
+                }
+                currentLine.push([point.latitude, point.longitude]);
+            }
+            if (currentLine.length > 0) lines.push(currentLine);
+            return lines;
+        }
+
         // Update or create markers
         for (const sat of data.satellites) {
             if (!mapMarkers[sat.satellite_id]) mapMarkers[sat.satellite_id] = [];
@@ -75,24 +93,24 @@ async function updateGroundTrackMap() {
                     weight: 2,
                     opacity: 0.9,
                     fillOpacity: 0.8
-                }).bindPopup(`<b>${sat.satellite_id}</b><br>Alt: ${curr.alt_km.toFixed(0)} km<br>Fuel: ${sat.fuel_kg.toFixed(1)} kg`);
+                }).bindPopup(`<b>${sat.satellite_id}</b><br>Alt: ${curr.altitude.toFixed(0)} km<br>Fuel: ${sat.fuel_kg.toFixed(1)} kg`);
                 marker.addTo(map);
                 mapMarkers[sat.satellite_id].push(marker);
 
-                const histCoords = sat.historical_track.map(p => [p.latitude, p.longitude]);
-                if (histCoords.length > 1) {
-                    const line = L.polyline(histCoords, {
+                const histSplit = getSplitCoords(sat.historical_track);
+                if (histSplit.length > 0) {
+                    const line = L.polyline(histSplit, {
                         color: '#7b2fff',
-                        weight: 1,
-                        opacity: 0.3,
+                        weight: 2,
+                        opacity: 0.5,
                         dashArray: '5, 5'
                     }).addTo(map);
                     mapMarkers[sat.satellite_id].push(line);
                 }
 
-                const predCoords = sat.predicted_track.map(p => [p.latitude, p.longitude]);
-                if (predCoords.length > 1) {
-                    const line = L.polyline(predCoords, {
+                const predSplit = getSplitCoords(sat.predicted_track);
+                if (predSplit.length > 0) {
+                    const line = L.polyline(predSplit, {
                         color: '#00e4ff',
                         weight: 2,
                         opacity: 0.6,
@@ -103,20 +121,30 @@ async function updateGroundTrackMap() {
             } else {
                 // Just update marker position
                 mapMarkers[sat.satellite_id][0].setLatLng([curr.latitude, curr.longitude]);
+                // Update history and predicted lines
+                if (mapMarkers[sat.satellite_id][1]) {
+                    mapMarkers[sat.satellite_id][1].setLatLngs(getSplitCoords(sat.historical_track));
+                }
+                if (mapMarkers[sat.satellite_id][2]) {
+                    mapMarkers[sat.satellite_id][2].setLatLngs(getSplitCoords(sat.predicted_track));
+                }
             }
         }
 
-        // Draw terminator once (it rarely changes)
+        // Draw terminator shadow overlay (night zone)
         const existingTerminator = map._terminator;
         if (!existingTerminator && data.terminator_line && data.terminator_line.length > 1) {
             const term_coords = data.terminator_line.map(p => [p[0], p[1]]);
-            const line = L.polyline(term_coords, {
-                color: '#ffaa00',
-                weight: 2,
-                opacity: 0.5,
-                dashArray: '8, 4'
-            }).bindPopup('Terminator Line (Day/Night)').addTo(map);
-            map._terminator = line;
+            const shadow = L.polygon(term_coords, {
+                color: 'transparent',
+                fillColor: '#000000',
+                fillOpacity: 0.5,
+                weight: 0,
+                interactive: false
+            }).addTo(map);
+            map._terminator = shadow;
+        } else if (existingTerminator && data.terminator_line) {
+            existingTerminator.setLatLngs(data.terminator_line.map(p => [p[0], p[1]]));
         }
 
     } catch (e) {

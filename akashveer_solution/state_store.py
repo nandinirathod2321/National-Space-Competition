@@ -10,7 +10,7 @@ class StateStore:
         """Converts a 3D position into a grid cell coordinate."""
         return tuple((pos // self.grid_size).astype(int))
 
-    def update_object(self, obj_id, pos, vel, timestamp, obj_type="DEBRIS"):
+    def update_object(self, obj_id, pos, vel, timestamp, obj_type="DEBRIS", metadata=None):
         pos_np = np.array(pos)
         
         # Remove from old grid cell if it exists
@@ -26,7 +26,8 @@ class StateStore:
                 "id": obj_id,
                 "type": obj_type,
                 "fuel_kg": fuel,
-                "mass_kg": 550.0 if obj_type == "SATELLITE" else 0.0
+                "mass_kg": 550.0 if obj_type == "SATELLITE" else 0.0,
+                "metadata": metadata or {}
             }
         
         self.objects[obj_id].update({

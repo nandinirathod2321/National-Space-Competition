@@ -14,14 +14,19 @@ from schemas import TelemetryPayload
 from state_store import store
 from physics_engine import rk4_step, get_eci_to_rtn_matrix, calculate_fuel_consumed
 from global_map import acm_global_map, SpaceObject, Vector3D
-from orbital_mechanics import state_to_orbital_elements, orbital_elements_to_state, hohmann_transfer, circular_orbit_velocity
+from orbital_mechanics import state_to_orbital_elements, orbital_elements_to_state, hohmann_transfer, circular_orbit_velocity, mean_anomaly_to_true_anomaly
 from ground_track import subsatellite_point, terminator_line, predict_ground_track, historical_ground_track
 from conjunction_analysis import conjunctions_for_satellite
 from pydantic import BaseModel
+
+# Global metadata store for object information
+object_metadata = {}
 from typing import Optional
 import numpy as np
 import math
 import os
+import csv
+from datetime import datetime
 
 app = FastAPI(title="Akashveer Telemetry Service")
 
@@ -189,6 +194,14 @@ async def get_all_states():
     return {"objects": result, "count": len(result)}
 
 
+@app.post("/api/reload-data")
+async def reload_data():
+    """Reload demo and CSV data"""
+    await seed_demo_data()
+    load_ground_station_data()
+    return {"status": "reloaded"}
+
+
 @app.get("/api/status")
 async def get_status():
     """Dashboard status summary."""
@@ -196,12 +209,32 @@ async def get_status():
     sats = [o for o in objects.values() if o.get("type") == "SATELLITE"]
     debris = [o for o in objects.values() if o.get("type") == "DEBRIS"]
     total_fuel = sum(o.get("fuel_kg", 0) for o in sats)
+    
+    # Global collision warning check
+    critical_warnings = 0
+    if len(sats) > 0 and len(debris) > 0:
+        for sat in sats:
+            for d in debris:
+                # Fast distance check
+                dist = np.linalg.norm(sat["pos"] - d["pos"])
+                if dist < 100.0:  # Critical < 100km
+                    critical_warnings += 1
+                    
     return {
         "total_objects": len(objects),
         "satellites": len(sats),
         "debris": len(debris),
         "total_fuel_kg": round(total_fuel, 2),
+        "critical_warnings": critical_warnings,
     }
+
+
+@app.post("/api/reload-data")
+async def reload_data():
+    """Reload demo and CSV data"""
+    await seed_demo_data()
+    load_ground_station_data()
+    return {"status": "reloaded"}
 
 
 @app.get("/api/orbits")
@@ -377,18 +410,22 @@ async def get_ground_track_data():
                 "predicted_track": predicted,
                 "historical_track": historical,
                 "fuel_kg": data.get("fuel_kg", 0),
-                "altitude_km": current_track["alt_km"]
+                "altitude_km": current_track["altitude"]
             })
         except Exception as e:
             print(f"Error computing ground track for {sat_id}: {e}")
     
     # Terminator line (day/night boundary)
-    terminator = terminator_line(str(store.objects[list(store.objects.keys())[0]].get("timestamp", "")))
-    
+    if store.objects:
+        first_ts = str(next(iter(store.objects.values())).get("timestamp", ""))
+        terminator = terminator_line(first_ts)
+    else:
+        terminator = []
+
     return {
         "satellites": features,
         "terminator_line": terminator,
-        "timestamp": str(store.objects[list(store.objects.keys())[0]].get("timestamp", "")) if store.objects else ""
+        "timestamp": first_ts if store.objects else ""
     }
 
 
@@ -495,6 +532,219 @@ async def get_maneuver_timeline():
     }
 
 
+@app.post("/api/seed-demo")
+async def seed_demo_data():
+    """Hints the dashboard with temporary objects for quick local demo."""
+    import datetime
+    import random
+
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+    demo_objects = []
+    
+    # 5 Satellites in diverse circular LEO
+    for i in range(5):
+        r = 6378.137 + 400.0 + (i * 50)  # slightly different altitudes
+        v = circular_orbit_velocity(r)
+        
+        # Give diverse positions around the globe
+        angle = (i * math.pi / 2.5)
+        inclination = (i * math.pi / 6)  # diverse inclinations
+        
+        pos = [
+            r * math.cos(angle) * math.cos(inclination),
+            r * math.sin(angle) * math.cos(inclination),
+            r * math.sin(inclination) # Latitude variation
+        ]
+        
+        # Velocity in perpendicular direction
+        vel = [
+            -v * math.sin(angle),
+            v * math.cos(angle),
+            v * math.sin(inclination) * 0.5
+        ]
+        
+        demo_objects.append({
+            "id": f"SAT-{(i+1):03d}",
+            "type": "SATELLITE",
+            "pos": pos,
+            "vel": vel,
+            "fuel_kg": 50.0 - (i*5),
+            "mass_kg": 500.0,
+            "timestamp": now
+        })
+        
+    # 15 Debris objects scattered
+    for i in range(15):
+        r = 6378.137 + 350.0 + random.uniform(0, 300)
+        v = circular_orbit_velocity(r)
+        angle = random.uniform(0, 2*math.pi)
+        inc = random.uniform(-math.pi/2, math.pi/2)
+        
+        pos = [
+            r * math.cos(angle) * math.cos(inc),
+            r * math.sin(angle) * math.cos(inc),
+            r * math.sin(inc)
+        ]
+        vel = [
+            -v * math.sin(angle) + random.uniform(-0.5, 0.5),
+            v * math.cos(angle) + random.uniform(-0.5, 0.5),
+            v * math.sin(inc) * random.uniform(0.1, 1.0)
+        ]
+        
+        demo_objects.append({
+            "id": f"DEBRIS-{(i+1):03d}",
+            "type": "DEBRIS",
+            "pos": pos,
+            "vel": vel,
+            "timestamp": now
+        })
+
+    for obj in demo_objects:
+        store.update_object(obj["id"], obj["pos"], obj["vel"], obj["timestamp"], obj["type"])
+        if "fuel_kg" in obj:
+            store.objects[obj["id"]]["fuel_kg"] = obj["fuel_kg"]
+            store.objects[obj["id"]]["mass_kg"] = obj["mass_kg"]
+
+    return {"status": "demo seeded", "objects": len(demo_objects)}
+
+
+@app.on_event("startup")
+async def startup_seed_demo():
+    # Preload the store so the dashboard renders immediately.
+    await seed_demo_data()
+    # Load ground station data
+    load_ground_station_data()
+
+
+def load_ground_station_data():
+    """Load satellite and debris data from ground_station.csv"""
+    print("Starting load_ground_station_data")
+    csv_path = os.path.join(ROOT_DIR, "ground_station.csv")
+    print(f"Looking for CSV at: {csv_path}")
+    if not os.path.exists(csv_path):
+        print("ground_station.csv not found, skipping data load")
+        return
+    
+    objects = []
+    successful = 0
+    failed = 0
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row_num, row in enumerate(reader, 1):
+            try:
+                # Parse orbital elements
+                semimajor = row['SEMIMAJOR_AXIS'].strip()
+                ecc = row['ECCENTRICITY'].strip()
+                inc = row['INCLINATION'].strip()
+                raan = row['RA_OF_ASC_NODE'].strip()
+                arg_peri = row['ARG_OF_PERICENTER'].strip()
+                mean_anom = row['MEAN_ANOMALY'].strip()
+                obj_type = row['OBJECT_TYPE'].strip()
+                
+                if not semimajor or not ecc or not inc or not raan or not arg_peri or not mean_anom or not obj_type:
+                    failed += 1
+                    continue
+                
+                a = float(semimajor)
+                e = float(ecc)
+                i = math.radians(float(inc))
+                raan_rad = math.radians(float(raan))
+                w = math.radians(float(arg_peri))
+                M = math.radians(float(mean_anom))
+                
+                # Convert mean anomaly to true anomaly
+                v = mean_anomaly_to_true_anomaly(M, e)
+                
+                # Get position and velocity
+                r, vel = orbital_elements_to_state(a, e, i, raan_rad, w, v)
+                
+                obj_type = obj_type.upper()  # PAYLOAD, DEBRIS, ROCKET BODY
+                if obj_type == 'PAYLOAD':
+                    obj_type = 'SATELLITE'
+                
+                # Create telemetry object
+                obj_id = row['OBJECT_ID'].strip() or row['NORAD_CAT_ID'].strip()
+                if not obj_id:
+                    failed += 1
+                    continue
+                
+                # Store additional metadata
+                metadata = {
+                    "name": row.get('OBJECT_NAME', '').strip(),
+                    "norad_id": row.get('NORAD_CAT_ID', '').strip(),
+                    "country": row.get('COUNTRY_CODE', '').strip(),
+                    "launch_date": row.get('LAUNCH_DATE', '').strip(),
+                    "rcs_size": row.get('RCS_SIZE', '').strip(),
+                    "classification": row.get('CLASSIFICATION_TYPE', '').strip(),
+                    "period": float(row.get('PERIOD', 0)),
+                    "apoapsis": float(row.get('APOAPSIS', 0)),
+                    "periapsis": float(row.get('PERIAPSIS', 0))
+                }
+                
+                obj = {
+                    "id": obj_id,
+                    "type": obj_type,
+                    "r": {"x": r[0], "y": r[1], "z": r[2]},
+                    "v": {"x": vel[0], "y": vel[1], "z": vel[2]}
+                }
+                objects.append(obj)
+                successful += 1
+                
+                # Store metadata for later use
+                object_metadata[obj_id] = metadata
+                
+                # Limit to first 100 for demo
+                if len(objects) >= 100:
+                    break
+                    
+            except (ValueError, KeyError) as ex:
+                failed += 1
+                if failed <= 5:  # Only print first 5 errors
+                    print(f"Error parsing row {row_num} for {row.get('OBJECT_NAME', 'unknown')}: {ex}")
+                continue
+    
+    print(f"CSV processing complete: {successful} successful, {failed} failed")
+    
+    if objects:
+        # Create payload
+        payload = TelemetryPayload(
+            timestamp=datetime.now(),
+            objects=objects
+        )
+        
+        # Ingest the data
+        for obj in payload.objects:
+            metadata = object_metadata.get(obj.id, {})
+            store.update_object(
+                obj.id,
+                [obj.r.x, obj.r.y, obj.r.z],
+                [obj.v.x, obj.v.y, obj.v.z],
+                payload.timestamp,
+                obj.type,
+                metadata
+            )
+        
+        # Update global map
+        global_objs = []
+        for obj in payload.objects:
+            fuel = store.objects.get(obj.id, {}).get("fuel_kg", 50.0) if obj.type == "SATELLITE" else 0.0
+            global_objs.append(
+                SpaceObject(
+                    id=obj.id,
+                    type=obj.type,
+                    r=Vector3D(x=obj.r.x, y=obj.r.y, z=obj.r.z),
+                    v=Vector3D(x=obj.v.x, y=obj.v.y, z=obj.v.z),
+                    fuel_kg=fuel,
+                )
+            )
+        acm_global_map.update_from_telemetry(payload.timestamp, global_objs)
+        
+        print(f"Loaded {len(objects)} objects from ground_station.csv")
+
+
+# ========== MODELS ==========
+
+
 # Serve frontend
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
 if os.path.isdir(FRONTEND_DIR):
@@ -512,3 +762,7 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/docs-dashboard")  
     async def serve_docs_dashboard():
         return FileResponse(os.path.join(FRONTEND_DIR, "simple.html"))
+    
+    @app.get("/advanced")
+    async def serve_advanced_dashboard():
+        return FileResponse(os.path.join(FRONTEND_DIR, "advanced.html"))
