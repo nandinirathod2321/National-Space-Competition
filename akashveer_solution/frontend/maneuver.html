@@ -320,7 +320,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter'
 
     <!-- Scheduled queue -->
     <div class="card">
-      <div class="card-title"><span class="dot"></span>SCHEDULED QUEUE</div>
+      <div class="card-title"><span class="dot"></span>MISSION TIMELINE — SCHEDULED QUEUE</div>
+      <div class="simulation-track" style="height:4px;background:rgba(123,47,255,.1);margin-bottom:10px;border-radius:2px;position:relative">
+         <div id="sim-now-marker" style="position:absolute;width:2px;height:10px;background:var(--bright);top:-3px;z-index:2"></div>
+      </div>
       <div class="hist-list" id="sched-list">
         <div class="empty">Queue empty</div>
       </div>
@@ -698,9 +701,13 @@ document.getElementById('btn-recover').onclick = async ()=>{
 // ── Maneuver history ──────────────────────────────────────
 async function loadHistory() {
   try {
-    const res = await fetch(`${API}/api/v2/maneuver/history`);
+    const res = await fetch(`${API}/api/v2/mission/timeline`);
     const d = await res.json();
-    simTime = d.sim_time_s||0;
+    
+    // Sim Clock update
+    const resSnap = await fetch(`${API}/api/v2/mission/snapshot`);
+    const snap = await resSnap.json();
+    simTime = snap.sim_time||0;
     document.getElementById('sim-clock').textContent = `SIM T+${simTime.toFixed(0)}s`;
 
     const hist = document.getElementById('hist-list');

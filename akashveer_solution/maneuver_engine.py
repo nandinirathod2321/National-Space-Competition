@@ -16,12 +16,17 @@ import time
 MU    = 398600.4418     # km³/s²
 R_E   = 6378.137        # km
 J2    = 1.08263e-3
-ISP   = 300.0           # s  (specific impulse)
-G0    = 9.80665 / 1000  # km/s² (standard gravity)
+ISP   = 300.0           # s
+G0    = 9.80665 / 1000  # km/s²
 DRY_MASS  = 500.0       # kg
 FUEL_INIT = 50.0        # kg
+THRUST_N  = 500.0       # N (Force for finite burn)
 COOLDOWN_S = 600        # s between burns
 CMD_DELAY_S = 10        # s uplink delay
+
+# Epoch: J2000 (Simplified for Hackathon simulation)
+J2000_EPOCH = 2451545.0  # Julian Date
+EARTH_ROTATION_RATE = 7.2921159e-5 # rad/s
 
 # Station-keeping slot tolerance
 SLOT_TOLERANCE_KM = 10.0
@@ -72,11 +77,22 @@ class ManeuverSchedule:
         nominal = self.slots[sat_id]["pos"]
         return float(np.linalg.norm(current_pos - nominal))
 
+    def get_gst_rad(self) -> float:
+        """Get Greenwish Sidereal Time in radians based on sim_time."""
+        return (self.sim_time * EARTH_ROTATION_RATE) % (2 * math.pi)
+
 
 schedule_store = ManeuverSchedule()
 
 
 # ─── Physics Utilities ─────────────────────────────────────────────────────────
+
+def calculate_energy(pos: np.ndarray, vel: np.ndarray) -> float:
+    """Computes Specific Orbital Energy (km²/s²). Must be constant in 2-body."""
+    r = np.linalg.norm(pos)
+    v = np.linalg.norm(vel)
+    return (v**2 / 2.0) - (MU / r)
+
 
 def _acceleration(pos: np.ndarray) -> np.ndarray:
     """Two-body + J2 acceleration (ECI, km/s²)."""
@@ -155,35 +171,61 @@ def state_to_elements(pos: np.ndarray, vel: np.ndarray) -> dict:
     }
 
 
-# ─── Ground-Station Line-of-Sight ──────────────────────────────────────────────
+# ─── Ground-Station Line-of-Sight (ECEF Refined) ───────────────────────────────
 
-def _eci_to_geodetic(pos: np.ndarray) -> Tuple[float, float, float]:
-    """Convert ECI position to (lat_deg, lon_deg, alt_km) — simplified sphere."""
-    r = np.linalg.norm(pos)
-    lat = math.degrees(math.asin(np.clip(pos[2]/r, -1, 1)))
-    lon = math.degrees(math.atan2(pos[1], pos[0]))
+def eci_to_ecef(pos_eci: np.ndarray, gst_rad: float) -> np.ndarray:
+    """Rotate ECI vector to ECEF frame."""
+    c, s = math.cos(gst_rad), math.sin(gst_rad)
+    rot = np.array([
+        [ c, s, 0],
+        [-s, c, 0],
+        [ 0, 0, 1]
+    ])
+    return rot @ pos_eci
+
+
+def ecef_to_geodetic(pos_ecef: np.ndarray) -> Tuple[float, float, float]:
+    """Convert ECEF to Lat/Lon/Alt."""
+    x, y, z = pos_ecef
+    r = np.linalg.norm(pos_ecef)
+    lon = math.degrees(math.atan2(y, x))
+    lat = math.degrees(math.asin(z / r))
     alt = r - R_E
     return lat, lon, alt
 
 
-def ground_station_los(pos: np.ndarray) -> List[dict]:
-    """Returns list of ground stations with line-of-sight to satellite."""
-    sat_lat, sat_lon, sat_alt = _eci_to_geodetic(pos)
+def ground_station_los(pos_eci: np.ndarray) -> List[dict]:
+    """Returns list of ground stations with verified Line-of-Sight."""
+    gst = schedule_store.get_gst_rad()
+    pos_ecef = eci_to_ecef(pos_eci, gst)
+    sat_lat, sat_lon, sat_alt = ecef_to_geodetic(pos_ecef)
+    
     visible = []
     for gs in GROUND_STATIONS:
-        # Spherical great-circle angle
-        dlat = math.radians(sat_lat - gs["lat"])
-        dlon = math.radians(sat_lon - gs["lon"])
-        a = math.sin(dlat/2)**2 + math.cos(math.radians(gs["lat"]))*math.cos(math.radians(sat_lat))*math.sin(dlon/2)**2
-        c = 2*math.atan2(math.sqrt(a), math.sqrt(1-a))
-        gc_angle_rad = c
-        # Elevation angle approximation
-        if sat_alt > 0 and R_E > 0:
-            el = math.degrees(math.atan2(math.cos(gc_angle_rad) - R_E/(R_E+sat_alt), math.sin(gc_angle_rad)))
-        else:
-            el = -90
-        if el >= gs["min_el"]:
-            visible.append({"gs_id": gs["id"], "elevation_deg": round(el, 2)})
+        # Vector from GS to Sat in ECEF
+        gs_phi = math.radians(gs["lat"])
+        gs_lambda = math.radians(gs["lon"])
+        
+        gs_pos_ecef = np.array([
+            R_E * math.cos(gs_phi) * math.cos(gs_lambda),
+            R_E * math.cos(gs_phi) * math.sin(gs_lambda),
+            R_E * math.sin(gs_phi)
+        ])
+        
+        rho_vec = pos_ecef - gs_pos_ecef
+        rho = np.linalg.norm(rho_vec)
+        
+        # Dot product with GS normal vector to find elevation
+        gs_normal = gs_pos_ecef / R_E
+        sin_el = np.dot(rho_vec, gs_normal) / rho
+        el_deg = math.degrees(math.asin(np.clip(sin_el, -1, 1)))
+        
+        if el_deg >= gs["min_el"]:
+            visible.append({
+                "gs_id": gs["id"], 
+                "elevation_deg": round(el_deg, 2),
+                "range_km": round(rho, 1)
+            })
     return visible
 
 
@@ -433,7 +475,17 @@ def station_keeping_dv(
     return R @ dv_rtn
 
 
-# ─── Apply Impulse Burn ────────────────────────────────────────────────────────
+# ── Finite Burn Duration Model (NEW) ──────────────────────────────────────────
+
+def calculate_burn_duration(dv_mag_kms: float, m_total_kg: float) -> float:
+    """Calculates burn duration based on Thrust (N) and Isp."""
+    if dv_mag_kms < 1e-9: return 0.0
+    # Average mass during burn
+    fuel_mass = fuel_for_dv(dv_mag_kms, m_total_kg)
+    m_avg = m_total_kg - (fuel_mass / 2.0)
+    # T = m_dot * Ve -> m_dot = T / (Isp * g0)
+    m_dot = THRUST_N / (ISP * (G0 * 1000)) # kg/s
+    return fuel_mass / m_dot
 
 def apply_rtn_burn(
     sat: dict,

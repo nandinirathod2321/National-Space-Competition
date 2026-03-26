@@ -1,11 +1,23 @@
 import numpy as np
 
-# Exact constants from the Problem Statement [cite: 65, 67]
-MU = 398600.4418      # km^3/s^2
-R_E = 6378.137        # km
-J2 = 1.08263e-3       # J2 coefficient
+# Constants from maneuver_engine
+MU = 398600.4418
+R_E = 6378.137
+J2 = 1.08263e-3
 
-def get_total_acceleration(pos):
+def calculate_orbital_energy(pos: np.ndarray, vel: np.ndarray) -> float:
+    """Specific orbital energy: (v²/2) - (mu/r). Must remain constant in 2-body."""
+    r = np.linalg.norm(pos)
+    v = np.linalg.norm(vel)
+    return (v**2 / 2.0) - (MU / r)
+
+def recommended_dt(altitude_km: float) -> float:
+    """Mission-grade dt recommendation base on altitude."""
+    if altitude_km < 300: return 1.0   # Fast dynamics at low perigee
+    if altitude_km < 1000: return 10.0 # Standard LEO
+    return 60.0 # High altitude / MEO
+
+def get_acceleration(pos):
     """
     Calculates the combined acceleration: 2-Body Gravity + J2 Perturbation.
     Formula source: [cite: 64, 66]
@@ -36,21 +48,30 @@ def rk4_step(pos, vel, dt):
     Requirement: [cite: 67]
     """
     def f(p, v):
-        return v, get_total_acceleration(p)
+        return v, get_acceleration(p)
 
     # k1
-    kv1, ka1 = f(pos, vel)
+    k1v, k1a = f(pos, vel)
     # k2
-    kv2, ka2 = f(pos + kv1 * dt/2, vel + ka1 * dt/2)
+    k2v, k2a = f(pos + k1v * dt/2, vel + k1a * dt/2)
     # k3
-    kv3, ka3 = f(pos + kv2 * dt/2, vel + ka2 * dt/2)
+    k3v, k3a = f(pos + k2v * dt/2, vel + k2a * dt/2)
     # k4
-    kv4, ka4 = f(pos + kv3 * dt, vel + ka3 * dt)
+    k4v, k4a = f(pos + k3v * dt, vel + k3a * dt)
 
-    new_pos = pos + (dt/6.0) * (kv1 + 2*kv2 + 2*kv3 + kv4)
-    new_vel = vel + (dt/6.0) * (ka1 + 2*ka2 + 2*ka3 + ka4)
+    return pos + (dt/6.0)*(k1v + 2*k2v + 2*k3v + k4v), \
+           vel + (dt/6.0)*(k1a + 2*k2a + 2*k3a + k4a)
 
-    return new_pos, new_vel
+def validate_stability(pos_initial, vel_initial, pos_final, vel_final, dt):
+    """Checks for mission-grade stability: energy divergence."""
+    e0 = calculate_orbital_energy(pos_initial, vel_initial)
+    e1 = calculate_orbital_energy(pos_final, vel_final)
+    divergence = abs((e1 - e0) / e0) if e0 != 0 else 0
+    
+    # Tolerant of J2 (which changes energy non-linearly), but alert on >1% drift
+    if divergence > 0.01:
+        return False, f"Stability Warning: Energy divergence {divergence:.4%} exceeded 1% (Check dt={dt}s)"
+    return True, "Stable"
 
 def get_eci_to_rtn_matrix(pos, vel):
     """Calculates the rotation matrix from ECI to RTN frame."""

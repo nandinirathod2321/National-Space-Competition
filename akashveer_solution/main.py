@@ -19,12 +19,12 @@ from ground_track import subsatellite_point, terminator_line, predict_ground_tra
 from conjunction_analysis import conjunctions_for_satellite
 from pydantic import BaseModel
 import maneuver_engine as ME
-
+import numpy as np
+from mission_manager import CommandPipeline, DecisionEngine, execute_autonomous_mission_step
+import asyncio
+from typing import Optional, List, Union
 # Global metadata store for object information
 object_metadata = {}
-from typing import Optional, List
-import numpy as np
-import math
 import os
 import csv
 from datetime import datetime
@@ -790,10 +790,81 @@ def _get_sat(sat_id: str) -> dict:
     return sat
 
 
+# ─── Mission Logic Loop ───────────────────────────────────────────────────────
+
+async def simulation_loop():
+    """Main simulation heartbeat. Advances physics and runs decision engine."""
+    counter = 0
+    while True:
+        try:
+            # Advance simulation time by 10s
+            ME.schedule_store.sim_time += 10
+            
+            # Execute scheduled burns
+            ME.schedule_store.execute_scheduled(store.objects)
+            
+            # Run Autonomous Mission Control every 30s instead of every 1s
+            if counter % 30 == 0:
+                execute_autonomous_mission_step()
+            
+            counter += 1
+            
+        except Exception as e:
+            print(f"[CRITICAL] Simulation Loop Error: {e}")
+        
+        await asyncio.sleep(1) # Run every real second for responsiveness
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(simulation_loop())
+
+
+# ─── New Mission-Grade APIs ───────────────────────────────────────────────────
+
+@app.get("/api/v2/mission/snapshot")
+async def mission_snapshot():
+    """Unified full-fleet snapshot for high-fidelity visualization."""
+    fleet = []
+    for sid, obj in store.objects.items():
+        if obj.get("type") == "SATELLITE":
+            pos = np.array(obj["pos"])
+            los = ME.ground_station_los(pos)
+            fleet.append({
+                "id": sid,
+                "pos": obj["pos"],
+                "vel": obj["vel"],
+                "fuel_kg": obj.get("fuel_kg", 0),
+                "fuel_pct": obj.get("fuel_kg", 0) / ME.FUEL_INIT * 100,
+                "has_los": len(los) > 0,
+                "status": "NOMINAL" if obj.get("fuel_kg", 0) > 5 else "EOL"
+            })
+    return {
+        "sim_time": ME.schedule_store.sim_time,
+        "gst_rad": ME.schedule_store.get_gst_rad(),
+        "satellites": fleet,
+        "debris_count": sum(1 for o in store.objects.values() if o.get("type") == "DEBRIS")
+    }
+
+@app.get("/api/v2/mission/timeline")
+async def mission_timeline():
+    """Returns chronologically ordered history of all mission events."""
+    return {
+        "history": ME.schedule_store.history,
+        "scheduled": ME.schedule_store.scheduled
+    }
+
+
 @app.post("/api/v2/maneuver/rtn")
 async def maneuver_rtn(req: RTNBurnRequest):
     """Apply an impulsive burn in RTN (Radial-Transverse-Normal) frame."""
     sat = _get_sat(req.satellite_id)
+    
+    # Mission-grade validation gate
+    dv = np.array([req.dv_r, req.dv_t, req.dv_n])
+    check = CommandPipeline.validate_maneuver(req.satellite_id, dv, req.bypass_los)
+    if not check["valid"] and not req.bypass_cooldown:
+        return {"status": "REJECTED", "reason": check["reason"]}
+
     # Keep numpy arrays in sync with maneuver engine
     ME.spatial_grid.update(req.satellite_id, sat["pos"], sat["vel"], "SATELLITE")
     result = ME.apply_rtn_burn(
@@ -816,6 +887,7 @@ async def maneuver_rtn(req: RTNBurnRequest):
             "fuel_burned_kg": result["fuel_burned_kg"],
             "fuel_remaining_kg": result["fuel_remaining_kg"],
             "sim_time_s": ME.schedule_store.sim_time,
+            "burn_duration_s": check.get("burn_duration_s", 0)
         })
     return result
 
