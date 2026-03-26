@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Akashveer — Orbital Maneuver & COLA System</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#09080e;--panel:rgba(15,12,26,.95);--border:rgba(123,47,255,.25);
+  --purple:#7b2fff;--bright:#a855f7;--light:#c084fc;--text:#e8d5ff;
+  --success:#22c55e;--warn:#f97316;--danger:#ef4444;--muted:#6b4faa;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;overflow:hidden}
+
+/* ── Layout ── */
+.shell{display:grid;grid-template-rows:54px 1fr;height:100vh}
+.topbar{display:flex;align-items:center;gap:12px;padding:0 20px;background:rgba(9,8,14,.97);border-bottom:1px solid var(--border);z-index:100}
+.topbar .logo{font-family:'Orbitron',monospace;font-size:.85em;font-weight:700;background:linear-gradient(135deg,#c084fc,#7b2fff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.topbar .subtitle{font-size:.65em;color:var(--muted);letter-spacing:2px}
+.topbar .spacer{flex:1}
+.nav-btn{padding:5px 14px;background:rgba(123,47,255,.12);border:1px solid rgba(123,47,255,.4);border-radius:4px;color:var(--bright);font-family:'Orbitron',monospace;font-size:.62em;cursor:pointer;transition:all .2s;letter-spacing:1px}
+.nav-btn:hover{background:rgba(123,47,255,.25);border-color:var(--light);color:var(--light)}
+.sim-clock{font-family:'Share Tech Mono',monospace;font-size:.72em;color:var(--muted);padding:4px 10px;border:1px solid rgba(123,47,255,.2);border-radius:3px}
+
+.main{display:grid;grid-template-columns:260px 1fr 300px;gap:1px;background:rgba(123,47,255,.08);overflow:hidden}
+.col{display:flex;flex-direction:column;gap:1px;overflow-y:auto;background:var(--bg)}
+.col::-webkit-scrollbar{width:4px}
+.col::-webkit-scrollbar-thumb{background:var(--purple)}
+
+/* ── Panel cards ── */
+.card{background:var(--panel);border-bottom:1px solid rgba(123,47,255,.12);padding:14px}
+.card-title{font-family:'Orbitron',monospace;font-size:.65em;letter-spacing:2px;color:var(--bright);margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.card-title .dot{width:6px;height:6px;border-radius:50%;background:var(--purple);box-shadow:0 0 6px var(--purple)}
+
+/* ── Satellite selector ── */
+.sat-list{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto}
+.sat-item{padding:8px 10px;border:1px solid rgba(123,47,255,.2);border-radius:4px;cursor:pointer;font-size:.78em;transition:all .2s;display:flex;justify-content:space-between;align-items:center}
+.sat-item:hover{border-color:var(--bright);background:rgba(123,47,255,.08)}
+.sat-item.active{border-color:var(--light);background:rgba(123,47,255,.15);box-shadow:0 0 10px rgba(123,47,255,.2)}
+.sat-item .sat-name{font-family:'Share Tech Mono',monospace;color:var(--light)}
+.sat-badge{font-size:.6em;padding:2px 6px;border-radius:2px;background:rgba(123,47,255,.2);color:var(--muted);letter-spacing:1px}
+.sat-badge.eol{background:rgba(239,68,68,.2);color:var(--danger)}
+.sat-badge.low{background:rgba(249,115,22,.2);color:var(--warn)}
+
+/* ── Fuel gauge ── */
+.fuel-gauge{margin-bottom:10px}
+.fuel-label{display:flex;justify-content:space-between;font-size:.72em;margin-bottom:4px}
+.fuel-label .val{font-family:'Share Tech Mono',monospace;color:var(--light)}
+.fuel-bar{height:8px;background:rgba(123,47,255,.15);border-radius:4px;overflow:hidden;border:1px solid rgba(123,47,255,.2)}
+.fuel-fill{height:100%;border-radius:4px;transition:width .5s ease;background:linear-gradient(90deg,var(--purple),var(--light))}
+.fuel-fill.warn{background:linear-gradient(90deg,#f97316,#fbbf24)}
+.fuel-fill.danger{background:linear-gradient(90deg,#ef4444,#f97316);animation:fuelPulse 1s ease infinite}
+@keyframes fuelPulse{0%,100%{opacity:1}50%{opacity:.6}}
+
+/* ── Orbital Elements display ── */
+.oe-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.oe-item{background:rgba(123,47,255,.06);border:1px solid rgba(123,47,255,.15);border-radius:3px;padding:6px 8px}
+.oe-key{font-size:.58em;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+.oe-val{font-family:'Share Tech Mono',monospace;font-size:.78em;color:var(--light);margin-top:2px}
+
+/* ── Status pills ── */
+.status-row{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.pill{font-size:.58em;padding:3px 8px;border-radius:10px;border:1px solid;letter-spacing:1px;font-family:'Share Tech Mono',monospace}
+.pill.ok{border-color:rgba(34,197,94,.4);background:rgba(34,197,94,.08);color:var(--success)}
+.pill.warn{border-color:rgba(249,115,22,.4);background:rgba(249,115,22,.08);color:var(--warn)}
+.pill.err{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.08);color:var(--danger)}
+.pill.info{border-color:rgba(123,47,255,.4);background:rgba(123,47,255,.1);color:var(--bright)}
+
+/* ── Burn form ── */
+.form-section{margin-bottom:12px}
+.form-label{font-size:.6em;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;display:block}
+.input-row{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.dv-input{background:rgba(123,47,255,.08);border:1px solid rgba(123,47,255,.3);border-radius:4px;padding:8px;color:var(--text);font-family:'Share Tech Mono',monospace;font-size:.82em;width:100%;text-align:center;transition:border-color .2s}
+.dv-input:focus{outline:none;border-color:var(--bright);box-shadow:0 0 8px rgba(123,47,255,.3)}
+.input-hint{font-size:.58em;color:var(--muted);text-align:center;margin-top:2px}
+
+.frame-tabs{display:flex;gap:0;margin-bottom:12px}
+.frame-tab{flex:1;padding:7px;text-align:center;font-family:'Orbitron',monospace;font-size:.6em;letter-spacing:1px;cursor:pointer;border:1px solid rgba(123,47,255,.3);color:var(--muted);transition:all .2s}
+.frame-tab:first-child{border-radius:4px 0 0 4px}
+.frame-tab:last-child{border-radius:0 4px 4px 0;border-left:none}
+.frame-tab.active{background:rgba(123,47,255,.2);border-color:var(--bright);color:var(--light)}
+
+.bypass-row{display:flex;gap:10px;margin:8px 0;font-size:.65em;color:var(--muted)}
+.bypass-row label{display:flex;align-items:center;gap:4px;cursor:pointer}
+.bypass-row input[type=checkbox]{accent-color:var(--purple)}
+
+/* ── Buttons ── */
+.btn{width:100%;padding:10px;font-family:'Orbitron',monospace;font-size:.7em;letter-spacing:1.5px;font-weight:700;border-radius:4px;cursor:pointer;transition:all .25s;border:1px solid;position:relative;overflow:hidden}
+.btn-burn{background:linear-gradient(135deg,rgba(123,47,255,.25),rgba(74,15,159,.2));border-color:var(--bright);color:var(--light)}
+.btn-burn:hover{background:linear-gradient(135deg,rgba(123,47,255,.4),rgba(74,15,159,.35));box-shadow:0 0 20px rgba(123,47,255,.4);transform:translateY(-1px)}
+.btn-burn:active{transform:translateY(0)}
+.btn-burn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-scan{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.4);color:var(--danger)}
+.btn-scan:hover{background:rgba(239,68,68,.2);box-shadow:0 0 14px rgba(239,68,68,.3)}
+.btn-cola{background:rgba(249,115,22,.12);border-color:rgba(249,115,22,.4);color:var(--warn);margin-top:6px}
+.btn-cola:hover{background:rgba(249,115,22,.25);box-shadow:0 0 14px rgba(249,115,22,.3)}
+.btn-sm{padding:5px 10px;font-size:.58em;width:auto;border-radius:3px}
+.btn-slot{background:rgba(34,197,94,.1);border-color:rgba(34,197,94,.3);color:var(--success)}
+.btn-slot:hover{background:rgba(34,197,94,.2)}
+
+/* ── Fuel calc preview ── */
+.fuel-preview{background:rgba(123,47,255,.06);border:1px solid rgba(123,47,255,.18);border-radius:4px;padding:10px;margin:8px 0;font-size:.72em}
+.fuel-preview .row{display:flex;justify-content:space-between;padding:2px 0}
+.fuel-preview .row .k{color:var(--muted)}
+.fuel-preview .row .v{font-family:'Share Tech Mono',monospace;color:var(--light)}
+.fuel-preview .row .v.warn{color:var(--warn)}
+.fuel-preview .row .v.danger{color:var(--danger)}
+
+/* ── Conjunction list ── */
+.conj-list{display:flex;flex-direction:column;gap:4px;max-height:300px;overflow-y:auto}
+.conj-item{padding:8px;border-radius:4px;border:1px solid;font-size:.7em;transition:border-color .2s}
+.conj-item.red{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.06)}
+.conj-item.yellow{border-color:rgba(249,115,22,.35);background:rgba(249,115,22,.05)}
+.conj-item.green{border-color:rgba(123,47,255,.2);background:rgba(123,47,255,.04)}
+.conj-header{display:flex;justify-content:space-between;margin-bottom:3px}
+.conj-id{font-family:'Share Tech Mono',monospace;color:var(--light)}
+.conj-dist{font-family:'Share Tech Mono',monospace;font-weight:700}
+.conj-item.red .conj-dist{color:var(--danger)}
+.conj-item.yellow .conj-dist{color:var(--warn)}
+.conj-item.green .conj-dist{color:var(--bright)}
+.conj-meta{color:var(--muted);font-size:.88em}
+
+/* ── Orbit recommendations ── */
+.orbit-list{display:flex;flex-direction:column;gap:4px;max-height:260px;overflow-y:auto}
+.orbit-item{padding:8px;border:1px solid rgba(123,47,255,.2);border-radius:4px;cursor:pointer;transition:all .2s;font-size:.7em}
+.orbit-item:hover{border-color:var(--bright);background:rgba(123,47,255,.08)}
+.orbit-item.best{border-color:rgba(34,197,94,.5);background:rgba(34,197,94,.04)}
+.orbit-item .orbit-head{display:flex;justify-content:space-between;margin-bottom:4px}
+.orbit-item .orbit-alt{font-family:'Orbitron',monospace;font-size:.9em;color:var(--light)}
+.orbit-score-bar{height:4px;background:rgba(123,47,255,.15);border-radius:2px;margin-top:4px;overflow:hidden}
+.orbit-score-fill{height:100%;background:linear-gradient(90deg,var(--purple),var(--success));border-radius:2px}
+
+/* ── History log ── */
+.hist-list{display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto}
+.hist-item{padding:8px;background:rgba(123,47,255,.05);border-left:2px solid var(--purple);border-radius:0 4px 4px 0;font-size:.68em}
+.hist-item .h-sat{font-family:'Share Tech Mono',monospace;color:var(--bright)}
+.hist-item .h-dv{color:var(--light)}
+.hist-item .h-meta{color:var(--muted);font-size:.9em;margin-top:2px}
+
+/* ── Toast notifications ── */
+#toast-wrap{position:fixed;top:62px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.toast{padding:10px 14px;border-radius:5px;font-size:.72em;font-family:'Share Tech Mono',monospace;letter-spacing:.5px;animation:toastIn .2s ease-out;box-shadow:0 4px 20px rgba(0,0,0,.6);pointer-events:none}
+.toast.ok{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.4);color:var(--success)}
+.toast.err{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.4);color:var(--danger)}
+.toast.warn{background:rgba(249,115,22,.15);border:1px solid rgba(249,115,22,.4);color:var(--warn)}
+.toast.info{background:rgba(123,47,255,.2);border:1px solid rgba(123,47,255,.5);color:var(--light)}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+/* ── Canvas orbit viz ── */
+#orbit-canvas{width:100%;height:220px;border:1px solid rgba(123,47,255,.2);border-radius:6px;background:#050408;display:block}
+
+/* ── Station keeping ── */
+.sk-meter{display:flex;align-items:center;gap:8px;margin:6px 0}
+.sk-label{font-size:.65em;color:var(--muted);width:80px}
+.sk-bar{flex:1;height:6px;background:rgba(123,47,255,.15);border-radius:3px;overflow:hidden;border:1px solid rgba(123,47,255,.2)}
+.sk-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--success),var(--warn));transition:width .4s}
+.sk-val{font-family:'Share Tech Mono',monospace;font-size:.65em;color:var(--light);width:55px;text-align:right}
+
+/* Scrollbar */
+.col::-webkit-scrollbar-track{background:transparent}
+
+/* Separator */
+.sep{height:1px;background:linear-gradient(90deg,transparent,rgba(123,47,255,.25),transparent);margin:4px 0}
+
+/* Empty state */
+.empty{color:var(--muted);font-size:.72em;text-align:center;padding:16px;font-style:italic}
+</style>
+</head>
+<body>
+<div class="shell">
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <div>
+    <div class="logo">⚡ AKASHVEER</div>
+    <div class="subtitle">ORBITAL MANEUVER & COLA SYSTEM</div>
+  </div>
+  <div class="spacer"></div>
+  <div class="sim-clock" id="sim-clock">SIM T+0s</div>
+  <button class="nav-btn" onclick="location.href='/dashboard'">← GLOBE</button>
+  <button class="nav-btn" onclick="location.href='/advanced'">ANALYSIS →</button>
+</div>
+
+<!-- ── Toast container ── -->
+<div id="toast-wrap"></div>
+
+<!-- ── Main 3-column layout ── -->
+<div class="main">
+
+  <!-- ══ LEFT COL: Satellite Selection + State ══ -->
+  <div class="col">
+
+    <!-- Satellite list -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>SATELLITE FLEET</div>
+      <div class="sat-list" id="sat-list">
+        <div class="empty">Loading fleet…</div>
+      </div>
+    </div>
+
+    <!-- Selected satellite state -->
+    <div class="card" id="sat-state-card">
+      <div class="card-title"><span class="dot"></span>ORBITAL STATE</div>
+      <div class="empty" id="sat-state-empty">Select a satellite</div>
+      <div id="sat-state-content" style="display:none">
+        <div class="fuel-gauge">
+          <div class="fuel-label">
+            <span>FUEL BUDGET</span>
+            <span class="val" id="fuel-val">— kg</span>
+          </div>
+          <div class="fuel-bar"><div class="fuel-fill" id="fuel-fill" style="width:100%"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:.6em;color:var(--muted);margin-top:3px">
+            <span id="fuel-pct">—%</span><span id="fuel-status">—</span>
+          </div>
+        </div>
+        <div class="oe-grid" id="oe-grid"></div>
+        <div class="status-row" id="status-row"></div>
+
+        <!-- Station-keeping -->
+        <div class="sep"></div>
+        <div style="font-size:.6em;color:var(--muted);letter-spacing:1.5px;margin:6px 0 4px">STATION KEEPING</div>
+        <div class="sk-meter">
+          <span class="sk-label">SLOT DEV</span>
+          <div class="sk-bar"><div class="sk-fill" id="sk-fill" style="width:0%"></div></div>
+          <span class="sk-val" id="sk-val">—</span>
+        </div>
+        <div id="sk-status" style="font-size:.62em;margin-bottom:6px"></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm btn-slot" id="btn-set-slot">SET SLOT</button>
+          <button class="btn btn-sm btn-cola" id="btn-recover" style="display:none">RECOVER</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Orbit canvas -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>ORBIT PREVIEW</div>
+      <canvas id="orbit-canvas"></canvas>
+    </div>
+
+  </div><!-- /left col -->
+
+  <!-- ══ CENTER COL: Maneuver Controls ══ -->
+  <div class="col">
+
+    <!-- Burn control -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>IMPULSIVE BURN — MANEUVER CONTROL</div>
+
+      <div class="frame-tabs">
+        <div class="frame-tab active" id="tab-rtn" onclick="setFrame('RTN')">RTN FRAME</div>
+        <div class="frame-tab" id="tab-eci" onclick="setFrame('ECI')">ECI FRAME</div>
+      </div>
+
+      <div class="form-section">
+        <span class="form-label" id="ax-label-r">Δv Radial (km/s)</span>
+        <div class="input-row">
+          <div>
+            <input class="dv-input" id="dv0" type="number" step="0.001" value="0.000" placeholder="0.000">
+            <div class="input-hint" id="hint0">Radial R̂</div>
+          </div>
+          <div>
+            <input class="dv-input" id="dv1" type="number" step="0.001" value="0.000" placeholder="0.000">
+            <div class="input-hint" id="hint1">Transverse T̂</div>
+          </div>
+          <div>
+            <input class="dv-input" id="dv2" type="number" step="0.001" value="0.000" placeholder="0.000">
+            <div class="input-hint" id="hint2">Normal N̂</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick-fill presets -->
+      <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px">
+        <span style="font-size:.58em;color:var(--muted);width:100%;margin-bottom:2px">QUICK PRESETS (km/s)</span>
+        <button class="nav-btn" style="font-size:.55em" onclick="preset(0,0.010,0)">+10m/s prograde</button>
+        <button class="nav-btn" style="font-size:.55em" onclick="preset(0,-0.010,0)">-10m/s retrograde</button>
+        <button class="nav-btn" style="font-size:.55em" onclick="preset(0.005,0,0)">+5m/s radial</button>
+        <button class="nav-btn" style="font-size:.55em" onclick="preset(0,0,0.005)">+5m/s normal</button>
+        <button class="nav-btn" style="font-size:.55em" onclick="preset(0,0.050,0)">+50m/s raise</button>
+        <button class="nav-btn" style="font-size:.55em" onclick="preset(0,-0.050,0)">-50m/s lower</button>
+      </div>
+
+      <!-- Fuel preview -->
+      <div class="fuel-preview" id="fuel-preview">
+        <div class="row"><span class="k">Δv magnitude</span><span class="v" id="prev-dv">—</span></div>
+        <div class="row"><span class="k">Fuel required</span><span class="v" id="prev-fuel">—</span></div>
+        <div class="row"><span class="k">Fuel remaining</span><span class="v" id="prev-remain">—</span></div>
+        <div class="row"><span class="k">Max Δv budget</span><span class="v" id="prev-maxdv">—</span></div>
+      </div>
+
+      <div class="bypass-row">
+        <label><input type="checkbox" id="bypass-los"> Bypass LOS check</label>
+        <label><input type="checkbox" id="bypass-cd"> Bypass cooldown</label>
+      </div>
+
+      <button class="btn btn-burn" id="btn-burn" onclick="executeBurn()">🚀 EXECUTE BURN</button>
+    </div>
+
+    <!-- Schedule future burn -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>SCHEDULE MANEUVER</div>
+      <div class="form-section">
+        <span class="form-label">Burn offset (seconds from now)</span>
+        <input class="dv-input" id="sched-time" type="number" min="10" value="60" style="width:100%">
+      </div>
+      <div style="font-size:.62em;color:var(--muted);margin-bottom:8px">Uses same Δv values from burn panel above</div>
+      <button class="btn btn-burn" onclick="scheduleBurn()" style="background:rgba(123,47,255,.15)">📅 VALIDATE &amp; QUEUE</button>
+    </div>
+
+    <!-- Burn history -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>MANEUVER LOG</div>
+      <div class="hist-list" id="hist-list">
+        <div class="empty">No burns recorded</div>
+      </div>
+    </div>
+
+    <!-- Scheduled queue -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>SCHEDULED QUEUE</div>
+      <div class="hist-list" id="sched-list">
+        <div class="empty">Queue empty</div>
+      </div>
+    </div>
+
+  </div><!-- /center col -->
+
+  <!-- ══ RIGHT COL: COLA + Orbit Recommendations ══ -->
+  <div class="col">
+
+    <!-- Conjunction scan -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>COLLISION AVOIDANCE (COLA)</div>
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <div style="flex:1">
+          <span class="form-label">Scan window (hours)</span>
+          <input class="dv-input" id="scan-hours" type="number" min="1" max="24" value="6" style="width:100%">
+        </div>
+        <div style="flex:1">
+          <span class="form-label">Auto Δv budget (km/s)</span>
+          <input class="dv-input" id="cola-dv" type="number" min="0.001" step="0.005" value="0.05" style="width:100%">
+        </div>
+      </div>
+      <button class="btn btn-scan" id="btn-scan" onclick="scanConjunctions()">🔍 SCAN CONJUNCTIONS</button>
+      <button class="btn btn-cola" id="btn-auto-cola" onclick="autoAvoid()">⚡ AUTO COLA MANEUVER</button>
+      <div class="sep"></div>
+      <div id="cola-summary" style="font-size:.65em;color:var(--muted);margin-bottom:6px">Run scan to detect threats</div>
+      <div class="conj-list" id="conj-list"></div>
+    </div>
+
+    <!-- Orbit recommendations -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>SMART ORBIT RECOMMENDATIONS</div>
+      <div style="font-size:.62em;color:var(--muted);margin-bottom:8px">Scored by Δv cost + debris proximity</div>
+      <button class="btn btn-burn" onclick="getRecommendations()" style="margin-bottom:8px;background:rgba(168,85,247,.15)">🧠 EVALUATE ORBITS</button>
+      <div class="orbit-list" id="orbit-list"><div class="empty">Click to evaluate candidate orbits</div></div>
+    </div>
+
+    <!-- LOS status -->
+    <div class="card">
+      <div class="card-title"><span class="dot"></span>GROUND-STATION VISIBILITY</div>
+      <div id="los-panel"><div class="empty">Select a satellite</div></div>
+    </div>
+
+  </div><!-- /right col -->
+
+</div><!-- /main -->
+</div><!-- /shell -->
+
+<script>
+const API = window.location.origin;
+let selectedSat = null;
+let satData = {};
+let burnFrame = 'RTN';
+let simTime = 0;
+
+// ── Utilities ──────────────────────────────────────────────
+function toast(msg, type='info', dur=3500) {
+  const w = document.getElementById('toast-wrap');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  w.appendChild(t);
+  setTimeout(() => t.remove(), dur);
+}
+
+function setFrame(f) {
+  burnFrame = f;
+  document.getElementById('tab-rtn').classList.toggle('active', f==='RTN');
+  document.getElementById('tab-eci').classList.toggle('active', f==='ECI');
+  const labels = f==='RTN'
+    ? ['Δv R (km/s)','Δv T (km/s)','Δv N (km/s)']
+    : ['Δv X (km/s)','Δv Y (km/s)','Δv Z (km/s)'];
+  const hints = f==='RTN'
+    ? ['Radial R̂','Transverse T̂','Normal N̂']
+    : ['ECI-X','ECI-Y','ECI-Z'];
+  for (let i=0;i<3;i++) {
+    document.getElementById(`hint${i}`).textContent = hints[i];
+  }
+}
+
+function preset(r,t,n) {
+  if (burnFrame==='RTN') { setDv(r,t,n); }
+  else { setDv(r,t,n); }
+  updatePreview();
+}
+function setDv(a,b,c) {
+  document.getElementById('dv0').value = a.toFixed(4);
+  document.getElementById('dv1').value = b.toFixed(4);
+  document.getElementById('dv2').value = c.toFixed(4);
+}
+function getDv() {
+  return [
+    parseFloat(document.getElementById('dv0').value)||0,
+    parseFloat(document.getElementById('dv1').value)||0,
+    parseFloat(document.getElementById('dv2').value)||0,
+  ];
+}
+function dvMag(dv) { return Math.sqrt(dv.reduce((s,v)=>s+v*v,0)); }
+
+// ── Tsiolkovsky preview (client-side) ──────────────────────
+const ISP=300, G0=9.80665/1000;
+function fuelForDv(dvKms, massKg) {
+  return massKg*(1-Math.exp(-dvKms/(ISP*G0)));
+}
+function dvForFuel(fuelKg, massKg) {
+  return ISP*G0*Math.log(massKg/Math.max(massKg-fuelKg,0.001));
+}
+
+function updatePreview() {
+  if (!selectedSat || !satData[selectedSat]) return;
+  const d = satData[selectedSat];
+  const dv = getDv();
+  const mag = dvMag(dv);
+  const mass = d.mass_kg||550;
+  const fuel = d.fuel_kg||0;
+  const needed = fuelForDv(mag, mass);
+  const remain = fuel-needed;
+  const maxDv = dvForFuel(fuel, mass);
+
+  document.getElementById('prev-dv').textContent = (mag*1000).toFixed(2)+' m/s';
+  const fEl = document.getElementById('prev-fuel');
+  fEl.textContent = needed.toFixed(3)+' kg';
+  fEl.className = 'v'+(needed>fuel?' danger':needed>fuel*0.5?' warn':'');
+  const rEl = document.getElementById('prev-remain');
+  rEl.textContent = Math.max(0,remain).toFixed(3)+' kg';
+  rEl.className = 'v'+(remain<0?' danger':remain<fuel*0.1?' warn':'');
+  document.getElementById('prev-maxdv').textContent = (maxDv*1000).toFixed(2)+' m/s';
+}
+['dv0','dv1','dv2'].forEach(id=>document.getElementById(id).addEventListener('input',updatePreview));
+
+// ── Fetch fleet ────────────────────────────────────────────
+async function loadFleet() {
+  try {
+    const res = await fetch(`${API}/api/v2/fuel/fleet`);
+    const data = await res.json();
+    const list = document.getElementById('sat-list');
+    if (!data.satellites.length) { list.innerHTML='<div class="empty">No satellites found</div>'; return; }
+    list.innerHTML = data.satellites.map(s=>{
+      const cls = s.eol_warning?'eol':s.status==='LOW'?'low':'';
+      return `<div class="sat-item${selectedSat===s.satellite_id?' active':''}" onclick="selectSat('${s.satellite_id}')">
+        <span class="sat-name">${s.satellite_id}</span>
+        <span class="sat-badge ${cls}">${s.fuel_percent.toFixed(0)}%</span>
+      </div>`;
+    }).join('');
+  } catch(e) { toast('Fleet load failed','err'); }
+}
+
+// ── Select satellite ───────────────────────────────────────
+async function selectSat(id) {
+  selectedSat = id;
+  document.querySelectorAll('.sat-item').forEach(el=>{
+    el.classList.toggle('active', el.querySelector('.sat-name').textContent===id);
+  });
+  await refreshSatState();
+  drawOrbitPreview();
+  updatePreview();
+}
+
+async function refreshSatState() {
+  if (!selectedSat) return;
+  try {
+    const res = await fetch(`${API}/api/v2/satellite/${selectedSat}`);
+    const d = await res.json();
+    satData[selectedSat] = d;
+
+    document.getElementById('sat-state-empty').style.display='none';
+    document.getElementById('sat-state-content').style.display='';
+
+    // Fuel bar
+    const pct = Math.min(100,d.fuel_percent);
+    const fill = document.getElementById('fuel-fill');
+    fill.style.width = pct+'%';
+    fill.className = 'fuel-fill'+(pct<5?' danger':pct<25?' warn':'');
+    document.getElementById('fuel-val').textContent = d.fuel_kg.toFixed(2)+' kg';
+    document.getElementById('fuel-pct').textContent = pct.toFixed(1)+'%';
+    document.getElementById('fuel-status').textContent = d.eol_warning?'⚠ EOL':d.status||'NOMINAL';
+
+    // Orbital elements
+    const oe = d.orbital_elements||{};
+    document.getElementById('oe-grid').innerHTML = [
+      ['ALTITUDE',`${(oe.altitude_km||0).toFixed(1)} km`],
+      ['INC',`${(oe.inc_deg||0).toFixed(2)}°`],
+      ['PERIOD',`${(oe.period_min||0).toFixed(2)} min`],
+      ['SPEED',`${(oe.speed_kms||0).toFixed(3)} km/s`],
+      ['ECC',`${(oe.e||0).toFixed(5)}`],
+      ['SMA',`${(oe.a_km||0).toFixed(1)} km`],
+    ].map(([k,v])=>`<div class="oe-item"><div class="oe-key">${k}</div><div class="oe-val">${v}</div></div>`).join('');
+
+    // Status pills
+    const pills = [];
+    if (d.has_los) pills.push(['ok','LOS ✓']); else pills.push(['err','NO LOS']);
+    if (d.cooldown_ok) pills.push(['ok','READY']); else pills.push(['warn',d.cooldown_msg.split(':')[0]]);
+    if (d.eol_warning) pills.push(['err','EOL WARNING']);
+    pills.push(['info',`MAX ΔV: ${(d.max_dv_kms*1000).toFixed(1)}m/s`]);
+    document.getElementById('status-row').innerHTML = pills.map(([c,t])=>`<span class="pill ${c}">${t}</span>`).join('');
+
+    // Station-keeping
+    const sk = d.station_keeping||{};
+    if (sk.has_slot) {
+      const dev = sk.deviation_km||0;
+      const pct = Math.min(100,(dev/50)*100);
+      document.getElementById('sk-fill').style.width=pct+'%';
+      document.getElementById('sk-val').textContent=dev.toFixed(2)+' km';
+      const skEl = document.getElementById('sk-status');
+      if (sk.out_of_slot) {
+        skEl.innerHTML='<span class="pill err">OUT OF SLOT</span>';
+        document.getElementById('btn-recover').style.display='';
+      } else {
+        skEl.innerHTML='<span class="pill ok">NOMINAL</span>';
+        document.getElementById('btn-recover').style.display='none';
+      }
+    } else {
+      document.getElementById('sk-val').textContent='No slot';
+      document.getElementById('sk-status').innerHTML='<span class="pill info">NO SLOT SET</span>';
+    }
+
+    // LOS panel
+    const losPins = d.los_stations||[];
+    document.getElementById('los-panel').innerHTML = losPins.length
+      ? losPins.map(gs=>`<div style="display:flex;justify-content:space-between;font-size:.7em;padding:4px 0;border-bottom:1px solid rgba(123,47,255,.1)">
+          <span style="color:var(--light);font-family:'Share Tech Mono',monospace">${gs.gs_id}</span>
+          <span class="pill ok">El: ${gs.elevation_deg.toFixed(1)}°</span>
+        </div>`).join('')
+      : '<div class="empty">No ground station in view</div>';
+
+    updatePreview();
+  } catch(e) { toast('Sat state fetch failed','err'); }
+}
+
+// ── Execute Burn ───────────────────────────────────────────
+async function executeBurn() {
+  if (!selectedSat) { toast('Select a satellite first','warn'); return; }
+  const btn = document.getElementById('btn-burn');
+  btn.disabled = true; btn.textContent = '🔥 BURNING…';
+  const [a,b,c] = getDv();
+  const body = burnFrame==='RTN'
+    ? {satellite_id:selectedSat, dv_r:a, dv_t:b, dv_n:c,
+       bypass_los:document.getElementById('bypass-los').checked,
+       bypass_cooldown:document.getElementById('bypass-cd').checked}
+    : {satellite_id:selectedSat, dv_x:a, dv_y:b, dv_z:c,
+       bypass_los:document.getElementById('bypass-los').checked,
+       bypass_cooldown:document.getElementById('bypass-cd').checked};
+  const url = burnFrame==='RTN' ? '/api/v2/maneuver/rtn' : '/api/v2/maneuver/eci';
+  try {
+    const res = await fetch(`${API}${url}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await res.json();
+    if (d.status==='EXECUTED') {
+      toast(`✓ Burn OK | ΔV=${( d.dv_mag_kms*1000).toFixed(2)}m/s | Fuel-${d.fuel_burned_kg.toFixed(3)}kg`,'ok');
+      if (d.eol_warning) toast('⚠ FUEL < 5% — EOL WARNING','err',6000);
+    } else {
+      toast(`✗ ${d.status}: ${d.reason}`,'err',5000);
+    }
+    await refreshSatState();
+    await loadFleet();
+    await loadHistory();
+    drawOrbitPreview();
+  } catch(e){ toast('Burn request failed','err'); }
+  btn.disabled=false; btn.textContent='🚀 EXECUTE BURN';
+}
+
+// ── Schedule burn ─────────────────────────────────────────
+async function scheduleBurn() {
+  if (!selectedSat) { toast('Select a satellite first','warn'); return; }
+  const [a,b,c] = getDv();
+  const t = parseFloat(document.getElementById('sched-time').value)||60;
+  const body = {satellite_id:selectedSat, burn_time_s:t, dv_r:a, dv_t:b, dv_n:c};
+  try {
+    const res = await fetch(`${API}/api/v2/maneuver/schedule`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await res.json();
+    toast(d.queued ? `📅 Queued T+${t}s | ${d.reason}`:`✗ ${d.reason}`, d.queued?'ok':'err', 5000);
+    await loadHistory();
+  } catch(e){ toast('Schedule failed','err'); }
+}
+
+// ── COLA scan ─────────────────────────────────────────────
+async function scanConjunctions() {
+  if (!selectedSat) { toast('Select a satellite first','warn'); return; }
+  const btn = document.getElementById('btn-scan');
+  btn.textContent = '⏳ SCANNING…'; btn.disabled=true;
+  const hrs = parseFloat(document.getElementById('scan-hours').value)||6;
+  try {
+    const res = await fetch(`${API}/api/v2/conjunctions/${selectedSat}?hours=${hrs}`);
+    const d = await res.json();
+    const sum = document.getElementById('cola-summary');
+    sum.innerHTML = `<span class="${d.critical>0?'pill err':'pill ok'}">${d.critical} CRITICAL</span> <span class="pill warn">${d.warnings} WARNINGS</span> <span class="pill info">${d.total} TOTAL (${hrs}h scan)</span>`;
+
+    const list = document.getElementById('conj-list');
+    if (!d.conjunctions.length){ list.innerHTML='<div class="empty">No conjunctions detected ✓</div>'; return; }
+    list.innerHTML = d.conjunctions.slice(0,15).map(c=>`
+      <div class="conj-item ${c.risk}">
+        <div class="conj-header">
+          <span class="conj-id">${c.object_id}</span>
+          <span class="conj-dist">${c.min_distance_km<1?(c.min_distance_km*1000).toFixed(1)+' m':c.min_distance_km.toFixed(2)+' km'}</span>
+        </div>
+        <div class="conj-meta">TCA: T+${Math.round(c.time_to_ca_s/60)}min &nbsp;|&nbsp; ${c.object_type} &nbsp;|&nbsp; ${c.risk.toUpperCase()}</div>
+      </div>`).join('');
+    if (d.critical>0) toast(`⚠ ${d.critical} CRITICAL conjunction(s) detected!`,'err',7000);
+    else toast(`Scan complete — ${d.total} objects within range`,'info');
+  } catch(e){ toast('Scan failed','err'); }
+  btn.textContent='🔍 SCAN CONJUNCTIONS'; btn.disabled=false;
+}
+
+// ── Auto COLA ─────────────────────────────────────────────
+async function autoAvoid() {
+  if (!selectedSat) { toast('Select a satellite first','warn'); return; }
+  const btn = document.getElementById('btn-auto-cola');
+  btn.textContent='⏳ COMPUTING…'; btn.disabled=true;
+  const dvBudget = parseFloat(document.getElementById('cola-dv').value)||0.05;
+  const body = {satellite_id:selectedSat, dv_budget_kms:dvBudget, bypass_cooldown:document.getElementById('bypass-cd').checked};
+  try {
+    const res = await fetch(`${API}/api/v2/cola/auto`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await res.json();
+    if (d.status==='SAFE') toast(`✓ SAFE: ${d.message}`,'ok');
+    else if (d.avoidance?.status==='EXECUTED') {
+      toast(`⚡ COLA burn executed | ΔV=${(d.avoidance.dv_mag_kms*1000).toFixed(2)}m/s | Threat: ${d.threat.object_id} was ${d.threat.min_distance_km.toFixed(2)}km`,'warn',6000);
+    } else toast(`✗ COLA: ${d.avoidance?.reason||d.message||'Failed'}`,'err');
+    await refreshSatState(); await loadFleet(); await loadHistory();
+    drawOrbitPreview();
+  } catch(e){ toast('COLA request failed','err'); }
+  btn.textContent='⚡ AUTO COLA MANEUVER'; btn.disabled=false;
+}
+
+// ── Orbit recommendations ─────────────────────────────────
+async function getRecommendations() {
+  if (!selectedSat){ toast('Select a satellite first','warn'); return; }
+  const list = document.getElementById('orbit-list');
+  list.innerHTML='<div class="empty">Evaluating…</div>';
+  try {
+    const res = await fetch(`${API}/api/v2/orbit/recommend`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({satellite_id:selectedSat})});
+    const d = await res.json();
+    if (!d.recommendations.length){ list.innerHTML='<div class="empty">No feasible orbits (insufficient fuel)</div>'; return; }
+    list.innerHTML = d.recommendations.map((r,i)=>`
+      <div class="orbit-item${i===0?' best':''}" onclick="applyRecommendation(${r.dv_t_kms||r.dv1_kms||0})">
+        <div class="orbit-head">
+          <span class="orbit-alt">${r.target_alt_km.toFixed(0)} km ${i===0?'⭐':''}</span>
+          <span style="color:var(--muted);font-size:.85em">ΔV: ${(r.dv_total_kms*1000).toFixed(1)}m/s</span>
+        </div>
+        <div style="display:flex;gap:8px;color:var(--muted);font-size:.85em;margin-bottom:4px">
+          <span>Fuel: ${r.fuel_required_kg.toFixed(2)}kg</span>
+          <span>Debris: ${r.debris_nearby}</span>
+          <span>Score: ${(r.total_score*100).toFixed(0)}/100</span>
+        </div>
+        <div class="orbit-score-bar"><div class="orbit-score-fill" style="width:${r.total_score*100}%"></div></div>
+      </div>`).join('');
+    toast(`Found ${d.recommendations.length} feasible orbits`,'info');
+  } catch(e){ toast('Orbit eval failed','err'); list.innerHTML='<div class="empty">Error</div>'; }
+}
+
+function applyRecommendation(dvT) {
+  // Pre-fill the transverse (prograde) burn for this orbit raise
+  preset(0, dvT, 0);
+  toast(`ΔV preset: T=${(dvT*1000).toFixed(1)}m/s — click EXECUTE BURN to apply`,'info');
+}
+
+// ── Station-keeping ───────────────────────────────────────
+document.getElementById('btn-set-slot').onclick = async ()=>{
+  if (!selectedSat) return;
+  try {
+    await fetch(`${API}/api/v2/station-keeping/${selectedSat}/set-slot`,{method:'POST'});
+    toast(`Nominal slot set for ${selectedSat}`,'ok');
+    await refreshSatState();
+  } catch(e){ toast('Set slot failed','err'); }
+};
+document.getElementById('btn-recover').onclick = async ()=>{
+  if (!selectedSat) return;
+  try {
+    const res = await fetch(`${API}/api/v2/station-keeping/${selectedSat}/recover`,{method:'POST'});
+    const d = await res.json();
+    toast(d.status==='EXECUTED'?`Recovery burn: ΔV=${(d.dv_mag_kms*1000).toFixed(2)}m/s`:`Failed: ${d.reason}`, d.status==='EXECUTED'?'ok':'err');
+    await refreshSatState();
+  } catch(e){ toast('Recovery failed','err'); }
+};
+
+// ── Maneuver history ──────────────────────────────────────
+async function loadHistory() {
+  try {
+    const res = await fetch(`${API}/api/v2/maneuver/history`);
+    const d = await res.json();
+    simTime = d.sim_time_s||0;
+    document.getElementById('sim-clock').textContent = `SIM T+${simTime.toFixed(0)}s`;
+
+    const hist = document.getElementById('hist-list');
+    if (!d.history.length) { hist.innerHTML='<div class="empty">No burns recorded</div>'; }
+    else hist.innerHTML=[...d.history].reverse().slice(0,12).map(h=>`
+      <div class="hist-item">
+        <div class="h-sat">${h.satellite_id} <span style="color:var(--muted)">${h.frame}</span></div>
+        <div class="h-dv">ΔV: ${(h.dv_mag_kms*1000).toFixed(2)} m/s &nbsp;|&nbsp; -${h.fuel_burned_kg.toFixed(3)} kg</div>
+        <div class="h-meta">Remaining: ${h.fuel_remaining_kg.toFixed(2)} kg &nbsp;|&nbsp; T=${h.sim_time_s.toFixed(0)}s</div>
+      </div>`).join('');
+
+    const sched = document.getElementById('sched-list');
+    if (!d.scheduled.length) { sched.innerHTML='<div class="empty">Queue empty</div>'; }
+    else sched.innerHTML=d.scheduled.map(s=>`
+      <div class="hist-item" style="border-left-color:var(--warn)">
+        <div class="h-sat">${s.satellite_id} <span class="pill warn" style="font-size:.55em">${s.status}</span></div>
+        <div class="h-dv">ΔV: ${(s.dv_mag_kms*1000).toFixed(2)} m/s &nbsp;|&nbsp; Needs: ${s.fuel_required_kg.toFixed(3)} kg</div>
+        <div class="h-meta">Burn at T+${s.burn_time_s.toFixed(0)}s</div>
+      </div>`).join('');
+  } catch(e){}
+}
+
+// ── Orbit canvas preview ──────────────────────────────────
+function drawOrbitPreview() {
+  const canvas = document.getElementById('orbit-canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width = canvas.offsetWidth;
+  const H = canvas.height = canvas.offsetHeight;
+  ctx.clearRect(0,0,W,H);
+
+  const cx=W/2, cy=H/2;
+  const Re=H*0.28; // Earth radius in pixels
+
+  // Earth
+  const grd=ctx.createRadialGradient(cx,cy,0,cx,cy,Re);
+  grd.addColorStop(0,'rgba(0,50,100,0.9)');
+  grd.addColorStop(1,'rgba(0,20,50,0.6)');
+  ctx.beginPath(); ctx.arc(cx,cy,Re,0,Math.PI*2);
+  ctx.fillStyle=grd; ctx.fill();
+  ctx.strokeStyle='rgba(123,47,255,0.3)'; ctx.lineWidth=1; ctx.stroke();
+
+  // Atmosphere glow
+  const atmGrd=ctx.createRadialGradient(cx,cy,Re,cx,cy,Re*1.08);
+  atmGrd.addColorStop(0,'rgba(100,50,255,0.15)');
+  atmGrd.addColorStop(1,'rgba(100,50,255,0)');
+  ctx.beginPath(); ctx.arc(cx,cy,Re*1.08,0,Math.PI*2);
+  ctx.fillStyle=atmGrd; ctx.fill();
+
+  if (!selectedSat || !satData[selectedSat]) {
+    ctx.fillStyle='rgba(107,79,170,0.6)';
+    ctx.font='11px Share Tech Mono';
+    ctx.textAlign='center';
+    ctx.fillText('Select satellite to preview orbit',cx,cy+Re+20);
+    return;
+  }
+
+  const d = satData[selectedSat];
+  const oe = d.orbital_elements||{};
+  const alt = oe.altitude_km||400;
+  const orbitR = Re*(1+(alt/6378)*2.5);
+
+  // Grid lines
+  ctx.strokeStyle='rgba(123,47,255,0.08)'; ctx.lineWidth=0.5;
+  for(let r=Re*0.5;r<W;r+=Re*0.5){
+    ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.stroke();
+  }
+
+  // Orbit ellipse (simplified circular for display)
+  const e = oe.e||0;
+  const rx = orbitR*(1+e*0.5);
+  const ry = orbitR*(1-e*0.5);
+  ctx.beginPath(); ctx.ellipse(cx,cy,rx,ry,oe.inc_deg?oe.inc_deg*Math.PI/180:0,0,Math.PI*2);
+  ctx.strokeStyle='rgba(168,85,247,0.6)'; ctx.lineWidth=1.5; ctx.setLineDash([]); ctx.stroke();
+
+  // Satellite dot
+  const angle = (Date.now()/20000)%(Math.PI*2);
+  const sx = cx+rx*Math.cos(angle);
+  const sy = cy+ry*Math.sin(angle);
+  ctx.beginPath(); ctx.arc(sx,sy,5,0,Math.PI*2);
+  ctx.fillStyle='rgba(168,85,247,1)';
+  ctx.shadowColor='rgba(168,85,247,0.9)'; ctx.shadowBlur=12;
+  ctx.fill(); ctx.shadowBlur=0;
+
+  // Labels
+  ctx.fillStyle='rgba(168,85,247,0.8)';
+  ctx.font='10px Share Tech Mono'; ctx.textAlign='left';
+  ctx.fillText(`${selectedSat}`,sx+8,sy-3);
+  ctx.fillStyle='rgba(107,79,170,0.7)'; ctx.font='9px Share Tech Mono';
+  ctx.fillText(`${alt.toFixed(0)} km`,sx+8,sy+9);
+
+  // Altitude scale
+  ctx.fillStyle='rgba(107,79,170,0.5)'; ctx.font='9px Share Tech Mono'; ctx.textAlign='right';
+  ctx.fillText(`Alt: ${alt.toFixed(1)} km`,W-6,H-6);
+}
+
+// Animate orbit dot
+function animateOrbit(){drawOrbitPreview();requestAnimationFrame(animateOrbit);}
+
+// ── Auto-refresh loop ─────────────────────────────────────
+async function autoRefresh() {
+  await loadFleet();
+  if (selectedSat) await refreshSatState();
+  await loadHistory();
+}
+
+// ── Init ──────────────────────────────────────────────────
+(async()=>{
+  await loadFleet();
+  await loadHistory();
+  animateOrbit();
+
+  // Auto-select first sat if none chosen
+  const fleet = await fetch(`${API}/api/v2/fuel/fleet`).then(r=>r.json()).catch(()=>({satellites:[]}));
+  if (fleet.satellites.length && !selectedSat) {
+    await selectSat(fleet.satellites[0].satellite_id);
+  }
+
+  setInterval(autoRefresh, 8000);
+})();
+</script>
+</body>
+</html>

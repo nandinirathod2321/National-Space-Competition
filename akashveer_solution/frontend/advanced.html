@@ -7,304 +7,301 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <link rel="stylesheet" href="/static/styles.css">
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Share+Tech+Mono&display=swap');
         * { scroll-behavior: smooth; }
-        
-        body { 
-            margin: 0; 
-            background: #05080f; 
-            color: #e4ecfa; 
-            font-family: 'Rajdhani', sans-serif;
+
+        /* ═══════════════════════════════════════
+           PURPLE-ON-BLACK THEME VARIABLES
+        ═══════════════════════════════════════ */
+        :root {
+            --bg-void:    #09080e;
+            --bg-panel:   #0f0c1a;
+            --bg-card:    rgba(123, 47, 255, 0.06);
+            --border-dim: rgba(123, 47, 255, 0.18);
+            --border-glow:rgba(168, 85, 247, 0.55);
+            --purple-bright: #a855f7;
+            --purple-mid:    #7b2fff;
+            --purple-dim:    rgba(123, 47, 255, 0.35);
+            --purple-glow:   rgba(168, 85, 247, 0.25);
+            --text-hi:  #e8d5ff;
+            --text-mid: #9b82c0;
+            --text-lo:  #5a4880;
+        }
+
+        body {
+            margin: 0;
+            background: var(--bg-void);
+            color: var(--text-hi);
+            font-family: 'Share Tech Mono', monospace;
             overflow: hidden;
         }
-        
-        /* Custom Scrollbar Styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: rgba(0, 228, 255, 0.05);
-            border-radius: 4px;
-        }
-        
+
+        /* ── Scrollbar ── */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(123,47,255,0.06); }
         ::-webkit-scrollbar-thumb {
-            background: linear-gradient(180deg, #00e4ff, #7b2fff);
-            border-radius: 4px;
-            border: 2px solid rgba(0, 0, 0, 0.3);
+            background: linear-gradient(180deg, #7b2fff, #4a0f9f);
+            border-radius: 3px;
         }
-        
         ::-webkit-scrollbar-thumb:hover {
-            background: linear-gradient(180deg, #00f0ff, #9b4fff);
-            box-shadow: 0 0 10px rgba(0, 228, 255, 0.5);
+            background: linear-gradient(180deg, #a855f7, #7b2fff);
+            box-shadow: 0 0 8px rgba(168,85,247,0.5);
         }
-        
-        /* Firefox */
-        * {
-            scrollbar-color: #00e4ff rgba(0, 228, 255, 0.1);
-            scrollbar-width: thin;
-        }
-        
+        * { scrollbar-color: var(--purple-mid) rgba(123,47,255,0.1); scrollbar-width: thin; }
+
+        /* ── Grid ── */
         .dashboard-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             grid-template-rows: auto 1fr 1fr;
-            gap: 12px;
+            gap: 10px;
             height: 100vh;
-            padding: 12px;
-            background: #05080f;
+            padding: 10px;
+            background: var(--bg-void);
         }
 
+        /* ── Header ── */
         .module-header {
             grid-column: 1 / -1;
             display: flex;
             align-items: center;
             gap: 20px;
-            padding: 16px;
-            background: linear-gradient(135deg, rgba(0,20,40,0.8), rgba(0,50,80,0.8));
-            border-bottom: 2px solid #00e4ff;
-            border-radius: 4px;
+            padding: 14px 20px;
+            background: linear-gradient(135deg, rgba(20,10,40,0.95), rgba(10,5,25,0.95));
+            border-bottom: 1px solid var(--purple-mid);
+            border-radius: 6px;
             font-family: 'Orbitron', sans-serif;
-            box-shadow: 0 4px 12px rgba(0, 228, 255, 0.15);
-            animation: headerGlow 3s ease-in-out infinite;
+            box-shadow: 0 0 0 1px var(--border-dim), 0 4px 24px rgba(123,47,255,0.2);
+            animation: headerGlow 4s ease-in-out infinite;
+            position: relative;
+            overflow: hidden;
         }
-
+        .module-header::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--purple-bright), transparent);
+            animation: scanline 6s linear infinite;
+        }
+        @keyframes scanline {
+            0%   { opacity: 0; transform: translateX(-100%); }
+            50%  { opacity: 1; }
+            100% { opacity: 0; transform: translateX(100%); }
+        }
         @keyframes headerGlow {
-            0%, 100% { box-shadow: 0 4px 12px rgba(0, 228, 255, 0.15); }
-            50% { box-shadow: 0 4px 20px rgba(0, 228, 255, 0.35); }
+            0%, 100% { box-shadow: 0 0 0 1px var(--border-dim), 0 4px 24px rgba(123,47,255,0.2); }
+            50%       { box-shadow: 0 0 0 1px var(--purple-mid), 0 4px 40px rgba(168,85,247,0.35); }
+        }
+        .module-header h1 {
+            margin: 0;
+            font-size: 1.6em;
+            background: linear-gradient(135deg, #c084fc, #7b2fff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: none;
+            filter: drop-shadow(0 0 12px rgba(168,85,247,0.6));
+            letter-spacing: 3px;
+        }
+        .module-header .status {
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 0.8em;
+            color: var(--text-mid);
+            letter-spacing: 2px;
         }
 
-        .module-header h1 { 
-            margin: 0; 
-            color: #00e4ff; 
-            font-size: 1.8em;
-            text-shadow: 0 0 20px rgba(0, 228, 255, 0.5);
-        }
-        
-        .module-header .status { 
-            font-family: 'Share Tech Mono', monospace; 
-            font-size: 0.85em;
-            color: #7b8fbb;
-            letter-spacing: 1px;
-        }
-
+        /* ── Module Cards ── */
         .module {
-            background: rgba(8, 14, 30, 0.88);
-            border: 1px solid rgba(0, 200, 255, 0.2);
+            background: var(--bg-panel);
+            border: 1px solid var(--border-dim);
             border-radius: 8px;
             overflow: hidden;
             display: flex;
             flex-direction: column;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: 0 2px 16px rgba(0,0,0,0.6), inset 0 0 0 1px rgba(123,47,255,0.04);
         }
-
         .module:hover {
-            border-color: rgba(0, 228, 255, 0.5);
-            box-shadow: 0 8px 24px rgba(0, 228, 255, 0.2);
+            border-color: var(--purple-bright);
+            box-shadow: 0 0 0 1px rgba(168,85,247,0.3),
+                        0 8px 32px rgba(123,47,255,0.25),
+                        inset 0 0 30px rgba(123,47,255,0.04);
             transform: translateY(-2px);
         }
-
         .module h2 {
             margin: 0;
-            padding: 12px;
+            padding: 11px 14px;
             font-family: 'Orbitron', sans-serif;
-            font-size: 0.9em;
-            letter-spacing: 2px;
-            background: linear-gradient(90deg, rgba(0, 228, 255, 0.08), transparent);
-            border-bottom: 1px solid rgba(0, 200, 255, 0.3);
-            color: #00e4ff;
-            text-shadow: 0 0 10px rgba(0, 228, 255, 0.3);
+            font-size: 0.78em;
+            letter-spacing: 2.5px;
+            background: linear-gradient(90deg, rgba(123,47,255,0.18), rgba(123,47,255,0.04), transparent);
+            border-bottom: 1px solid var(--border-dim);
+            color: var(--purple-bright);
+            text-shadow: 0 0 12px rgba(168,85,247,0.5);
             transition: all 0.3s ease;
         }
-
         .module:hover h2 {
-            background: linear-gradient(90deg, rgba(0, 228, 255, 0.15), transparent);
-            text-shadow: 0 0 15px rgba(0, 228, 255, 0.5);
+            background: linear-gradient(90deg, rgba(123,47,255,0.28), rgba(123,47,255,0.06), transparent);
+            text-shadow: 0 0 20px rgba(168,85,247,0.8);
+            color: #c084fc;
         }
-
         .module-content {
             flex: 1;
             overflow: hidden;
             position: relative;
         }
 
-        /* Ground Track Map */
+        /* ── Map ── */
         #map { height: 100%; width: 100%; }
 
-        /* Bullseye Chart */
+        /* ── Bullseye ── */
         #bullseye-canvas { width: 100%; height: 100%; display: block; }
 
-        /* Heatmap with smooth scroll */
-        .heatmap-container { 
-            padding: 12px; 
-            overflow-y: auto; 
+        /* ── Heatmap ── */
+        .heatmap-container {
+            padding: 12px;
+            overflow-y: auto;
             height: 100%;
             animation: scrollIn 0.4s ease-out;
         }
-        
         @keyframes scrollIn {
-            from { opacity: 0.7; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
+            from { opacity: 0.6; transform: translateY(8px); }
+            to   { opacity: 1;   transform: translateY(0); }
         }
-        
-        .fuel-bar { 
-            display: flex; 
-            align-items: center; 
-            gap: 8px; 
-            margin-bottom: 12px;
-            padding: 10px;
-            background: linear-gradient(135deg, rgba(0,228,255,0.05), rgba(123,47,255,0.05));
+        .fuel-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 10px;
+            padding: 9px 12px;
+            background: linear-gradient(135deg, rgba(123,47,255,0.07), rgba(74,15,159,0.05));
             border-radius: 6px;
-            border: 1px solid rgba(0, 228, 255, 0.1);
-            font-size: 0.85em;
+            border: 1px solid var(--border-dim);
+            font-size: 0.83em;
             transition: all 0.3s ease;
             cursor: default;
             user-select: none;
         }
-        
         .fuel-bar:hover {
-            background: linear-gradient(135deg, rgba(0,228,255,0.1), rgba(123,47,255,0.1));
-            border-color: rgba(0, 228, 255, 0.3);
+            background: linear-gradient(135deg, rgba(123,47,255,0.14), rgba(74,15,159,0.1));
+            border-color: rgba(168,85,247,0.4);
             transform: translateX(4px);
-            box-shadow: 0 0 8px rgba(0, 228, 255, 0.2);
+            box-shadow: 0 0 10px rgba(123,47,255,0.2);
         }
-        
-        .fuel-bar-label { 
-            min-width: 70px; 
-            color: #aaa;
+        .fuel-bar-label {
+            min-width: 70px;
+            color: var(--text-mid);
             font-weight: 600;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
         }
-        
         .fuel-bar-fill {
             flex: 1;
-            height: 20px;
-            background: linear-gradient(90deg, #ff3c5e, #ffca28, #4cff9f);
-            border-radius: 4px;
-            border: 1px solid rgba(255,255,255,0.15);
+            height: 18px;
+            background: linear-gradient(90deg, #ff3c5e 0%, #c084fc 50%, #7b2fff 100%);
+            border-radius: 3px;
+            border: 1px solid rgba(168,85,247,0.2);
             position: relative;
             overflow: hidden;
             transition: all 0.4s ease;
-            box-shadow: 0 0 8px rgba(0, 228, 255, 0.2);
+            box-shadow: 0 0 8px rgba(123,47,255,0.4);
         }
-        
         .fuel-bar-fill::after {
             content: '';
             position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
-            animation: shimmer 2s infinite;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+            animation: shimmer 2.5s infinite;
         }
-        
         @keyframes shimmer {
-            0% { left: -100%; }
-            50% { left: 100%; }
+            0%   { left: -100%; }
+            60%  { left: 100%; }
             100% { left: 100%; }
         }
-        
         .fuel-bar:hover .fuel-bar-fill {
-            box-shadow: 0 0 12px rgba(0, 228, 255, 0.4);
+            box-shadow: 0 0 16px rgba(168,85,247,0.5);
             transform: scaleY(1.1);
         }
-        
-        .fuel-bar-value { 
-            min-width: 50px; 
-            text-align: right; 
-            color: #4cff9f; 
+        .fuel-bar-value {
+            min-width: 55px;
+            text-align: right;
+            color: #c084fc;
             font-family: 'Share Tech Mono', monospace;
             font-weight: 700;
         }
 
-        /* Gantt Timer with enhanced scroll */
-        .gantt-container { 
-            padding: 12px; 
+        /* ── Gantt ── */
+        .gantt-container {
+            padding: 12px;
             overflow-x: auto;
             overflow-y: auto;
             height: 100%;
             animation: scrollIn 0.4s ease-out;
         }
-        
         .gantt-row {
             display: flex;
             align-items: center;
             gap: 8px;
-            margin-bottom: 10px;
-            padding: 8px;
-            background: linear-gradient(90deg, rgba(0,0,0,0.2), rgba(0,228,255,0.02));
-            border-left: 3px solid rgba(0, 228, 255, 0.3);
+            margin-bottom: 9px;
+            padding: 7px 10px;
+            background: linear-gradient(90deg, rgba(123,47,255,0.06), rgba(74,15,159,0.02));
+            border-left: 3px solid var(--purple-mid);
             border-radius: 4px;
             transition: all 0.3s ease;
             cursor: default;
         }
-        
         .gantt-row:hover {
-            background: linear-gradient(90deg, rgba(0,0,0,0.3), rgba(0,228,255,0.08));
-            border-left-color: #00e4ff;
+            background: linear-gradient(90deg, rgba(123,47,255,0.14), rgba(74,15,159,0.06));
+            border-left-color: var(--purple-bright);
             transform: translateX(4px);
-            box-shadow: 0 0 8px rgba(0, 228, 255, 0.2);
+            box-shadow: 0 0 12px rgba(123,47,255,0.25);
         }
-        
-        .gantt-label { 
-            min-width: 80px; 
-            font-size: 0.85em; 
-            color: #7b8fbb;
+        .gantt-label {
+            min-width: 80px;
+            font-size: 0.82em;
+            color: var(--text-mid);
             font-weight: 600;
-            letter-spacing: 0.5px;
+            letter-spacing: 1px;
         }
-        
         .gantt-timeline {
             flex: 1;
-            height: 28px;
-            background: rgba(0,0,0,0.4);
-            border: 1px solid rgba(0, 228, 255, 0.1);
-            border-radius: 4px;
+            height: 26px;
+            background: rgba(0,0,0,0.5);
+            border: 1px solid rgba(123,47,255,0.15);
+            border-radius: 3px;
             position: relative;
             overflow: hidden;
         }
-        
         .gantt-block {
             position: absolute;
             height: 100%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.7em;
-            border-radius: 3px;
+            font-size: 0.68em;
+            border-radius: 2px;
             color: white;
             font-weight: bold;
             transition: all 0.3s ease;
             cursor: pointer;
             letter-spacing: 0.5px;
-            box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
         }
-        
         .gantt-block:hover {
-            filter: brightness(1.3);
-            box-shadow: 0 0 12px rgba(255, 255, 255, 0.4);
+            filter: brightness(1.35);
+            box-shadow: 0 0 14px rgba(168,85,247,0.5);
             transform: scaleY(1.15);
         }
-        
-        .burn-block { 
-            background: linear-gradient(135deg, #ff6464, #ff4444);
-            border: 1px solid rgba(255, 100, 100, 0.5);
+        .burn-block {
+            background: linear-gradient(135deg, #9333ea, #7b2fff);
+            border: 1px solid rgba(168,85,247,0.5);
         }
-        
-        .burn-block:hover {
-            background: linear-gradient(135deg, #ff7a7a, #ff5555);
+        .burn-block:hover { background: linear-gradient(135deg, #a855f7, #8b3fff); }
+        .cooldown-block {
+            background: linear-gradient(135deg, #6d28d9, #4c1d95);
+            border: 1px solid rgba(109,40,217,0.6);
         }
-        
-        .cooldown-block { 
-            background: linear-gradient(135deg, #ffa500, #ff8c00);
-            border: 1px solid rgba(255, 165, 0, 0.5);
-        }
-        
-        .cooldown-block:hover {
-            background: linear-gradient(135deg, #ffb826, #ff9a1a);
-        }
+        .cooldown-block:hover { background: linear-gradient(135deg, #7c3aed, #5b21b6); }
 
         @media (max-width: 1400px) {
             .dashboard-grid {
@@ -312,11 +309,41 @@
                 grid-template-rows: auto 1fr 1fr 1fr 1fr;
             }
         }
+        #btn-back-globe {
+            background: linear-gradient(90deg, rgba(123,47,255,0.2), transparent);
+            border: 1px solid var(--purple-mid);
+            border-radius: 5px;
+            padding: 8px 15px;
+            color: var(--purple-bright);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.75em;
+            letter-spacing: 1.5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 20px;
+            text-shadow: 0 0 8px rgba(168,85,247,0.5);
+            box-shadow: 0 0 10px rgba(123,47,255,0.2);
+        }
+        #btn-back-globe:hover {
+            background: linear-gradient(90deg, rgba(123,47,255,0.35), transparent);
+            border-color: var(--purple-bright);
+            color: #c084fc;
+            text-shadow: 0 0 15px rgba(168,85,247,0.8);
+            box-shadow: 0 0 20px rgba(123,47,255,0.4);
+            transform: translateY(-1px);
+        }
     </style>
 </head>
 <body>
     <!-- Header -->
     <div class="module-header">
+        <button id="btn-back-globe" onclick="window.location.href='/dashboard'" title="Back to 3D Globe">
+            &#x2190; GLOBE VIEW
+        </button>
+        <button id="btn-to-maneuver" onclick="window.location.href='/maneuver'" title="Go to Maneuver Control" 
+                style="background: linear-gradient(90deg, rgba(239, 68, 68, 0.2), transparent); border: 1px solid rgba(239, 68, 68, 0.5); border-radius: 5px; padding: 8px 15px; color: #fca5a5; font-family: 'Orbitron', sans-serif; font-size: 0.75em; letter-spacing: 1.5px; cursor: pointer; transition: all 0.3s ease; margin-left: 20px;">
+            🚀 MANEUVER
+        </button>
         <h1>⚡ AKASHVEER ADVANCED MISSION CONTROL</h1>
         <div class="status">
             <span id="status-sats">0 Satellites</span> | 

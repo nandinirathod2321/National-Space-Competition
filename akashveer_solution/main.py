@@ -18,10 +18,11 @@ from orbital_mechanics import state_to_orbital_elements, orbital_elements_to_sta
 from ground_track import subsatellite_point, terminator_line, predict_ground_track, historical_ground_track
 from conjunction_analysis import conjunctions_for_satellite
 from pydantic import BaseModel
+import maneuver_engine as ME
 
 # Global metadata store for object information
 object_metadata = {}
-from typing import Optional
+from typing import Optional, List
 import numpy as np
 import math
 import os
@@ -39,22 +40,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ========== MODELS ==========
 class ManeuverRequest(BaseModel):
     """Request to perform an orbital maneuver."""
     satellite_id: str
     target_altitude_km: float  # Target circular orbit altitude
-    target_inclination_deg: Optional[float] = None  # Target inclination (if None, keep current)
-    
+    target_inclination_deg: Optional[float] = None
+
 class ManeuverPlan(BaseModel):
     """Plan for a maneuver (returns delta-V and timing info)."""
     satellite_id: str
     current_altitude_km: float
     target_altitude_km: float
-    dv_required: float  # km/s
+    dv_required: float
     fuel_required_kg: float
     can_execute: bool
     reason: str
+
+# ── New maneuver models ──────────────────────────────────────────────────────
+class RTNBurnRequest(BaseModel):
+    satellite_id: str
+    dv_r: float = 0.0   # km/s  Radial
+    dv_t: float = 0.0   # km/s  Transverse (prograde/retrograde)
+    dv_n: float = 0.0   # km/s  Normal (plane change)
+    bypass_los: bool = False
+    bypass_cooldown: bool = False
+
+class ECIBurnRequest(BaseModel):
+    satellite_id: str
+    dv_x: float = 0.0
+    dv_y: float = 0.0
+    dv_z: float = 0.0
+    bypass_los: bool = False
+    bypass_cooldown: bool = False
+
+class ScheduleRequest(BaseModel):
+    satellite_id: str
+    burn_time_s: float          # simulation time offset for burn
+    dv_r: float = 0.0
+    dv_t: float = 0.0
+    dv_n: float = 0.0
+
+class OrbitRecommendRequest(BaseModel):
+    satellite_id: str
+    candidate_altitudes_km: Optional[List[float]] = None
+
+class COLARequest(BaseModel):
+    satellite_id: str
+    dv_budget_kms: float = 0.05
+    bypass_cooldown: bool = False
+
 
 @app.get("/")
 async def root():
@@ -742,10 +776,331 @@ def load_ground_station_data():
         print(f"Loaded {len(objects)} objects from ground_station.csv")
 
 
-# ========== MODELS ==========
+# =========================================================================
+# NEW MANEUVER ENGINE ENDPOINTS
+# =========================================================================
+
+def _get_sat(sat_id: str) -> dict:
+    """Helper: fetch satellite from store or raise 404."""
+    if sat_id not in store.objects:
+        raise HTTPException(404, f"Satellite '{sat_id}' not found")
+    sat = store.objects[sat_id]
+    if sat.get("type") != "SATELLITE":
+        raise HTTPException(400, f"Object '{sat_id}' is not a satellite")
+    return sat
 
 
-# Serve frontend
+@app.post("/api/v2/maneuver/rtn")
+async def maneuver_rtn(req: RTNBurnRequest):
+    """Apply an impulsive burn in RTN (Radial-Transverse-Normal) frame."""
+    sat = _get_sat(req.satellite_id)
+    # Keep numpy arrays in sync with maneuver engine
+    ME.spatial_grid.update(req.satellite_id, sat["pos"], sat["vel"], "SATELLITE")
+    result = ME.apply_rtn_burn(
+        sat, req.dv_r, req.dv_t, req.dv_n,
+        check_los=not req.bypass_los,
+        check_cooldown=not req.bypass_cooldown,
+        sat_id=req.satellite_id,
+    )
+    if result["status"] == "EXECUTED":
+        store.update_object(req.satellite_id, sat["pos"], sat["vel"],
+                            store.objects[req.satellite_id]["timestamp"], "SATELLITE")
+        store.objects[req.satellite_id]["fuel_kg"] = sat["fuel_kg"]
+        store.objects[req.satellite_id]["mass_kg"] = sat["mass_kg"]
+        # Log to maneuver history
+        ME.schedule_store.history.append({
+            "satellite_id": req.satellite_id,
+            "frame": "RTN",
+            "dv_rtn": [req.dv_r, req.dv_t, req.dv_n],
+            "dv_mag_kms": result["dv_mag_kms"],
+            "fuel_burned_kg": result["fuel_burned_kg"],
+            "fuel_remaining_kg": result["fuel_remaining_kg"],
+            "sim_time_s": ME.schedule_store.sim_time,
+        })
+    return result
+
+
+@app.post("/api/v2/maneuver/eci")
+async def maneuver_eci(req: ECIBurnRequest):
+    """Apply an impulsive burn in ECI frame (km/s)."""
+    sat = _get_sat(req.satellite_id)
+    ME.spatial_grid.update(req.satellite_id, sat["pos"], sat["vel"], "SATELLITE")
+    result = ME.apply_eci_burn(
+        sat, req.dv_x, req.dv_y, req.dv_z,
+        sat_id=req.satellite_id,
+        check_los=not req.bypass_los,
+        check_cooldown=not req.bypass_cooldown,
+    )
+    if result["status"] == "EXECUTED":
+        store.update_object(req.satellite_id, sat["pos"], sat["vel"],
+                            store.objects[req.satellite_id]["timestamp"], "SATELLITE")
+        store.objects[req.satellite_id]["fuel_kg"] = sat["fuel_kg"]
+        store.objects[req.satellite_id]["mass_kg"] = sat["mass_kg"]
+    return result
+
+
+@app.post("/api/v2/maneuver/schedule")
+async def schedule_maneuver(req: ScheduleRequest):
+    """Validate and queue a future maneuver burn."""
+    sat = _get_sat(req.satellite_id)
+    pos = np.array(sat["pos"])
+    vel = np.array(sat["vel"])
+    fuel = sat.get("fuel_kg", 0.0)
+    mass = sat.get("mass_kg", ME.DRY_MASS + fuel)
+
+    dv_rtn = np.array([req.dv_r, req.dv_t, req.dv_n])
+    dv_mag = float(np.linalg.norm(dv_rtn))
+
+    # Validate
+    cooldown_ok, cd_msg = ME.schedule_store.can_execute(req.satellite_id)
+    los = ME.ground_station_los(pos)
+    fuel_needed = ME.fuel_for_dv(dv_mag, mass) if dv_mag > 0 else 0.0
+    fuel_ok = fuel_needed <= fuel
+
+    entry = {
+        "satellite_id": req.satellite_id,
+        "burn_time_s": req.burn_time_s,
+        "dv_r": req.dv_r, "dv_t": req.dv_t, "dv_n": req.dv_n,
+        "dv_mag_kms": round(dv_mag, 6),
+        "fuel_required_kg": round(fuel_needed, 4),
+        "status": "QUEUED",
+    }
+
+    valid = cooldown_ok and fuel_ok and len(los) > 0
+    if valid:
+        ME.schedule_store.scheduled.append(entry)
+
+    return {
+        "valid": valid,
+        "queued": valid,
+        "fuel_available_kg": round(fuel, 3),
+        "fuel_required_kg": round(fuel_needed, 4),
+        "fuel_ok": fuel_ok,
+        "cooldown_ok": cooldown_ok,
+        "cooldown_msg": cd_msg,
+        "los_stations": los,
+        "los_ok": len(los) > 0,
+        "entry": entry,
+        "reason": "Maneuver queued" if valid else f"Validation failed: {'no LOS' if not los else cd_msg if not cooldown_ok else 'insufficient fuel'}",
+    }
+
+
+@app.get("/api/v2/satellite/{sat_id}")
+async def get_satellite_full(sat_id: str):
+    """Comprehensive state for a single satellite: orbit elements, fuel, station-keeping, LOS."""
+    sat = _get_sat(sat_id)
+    pos = np.array(sat["pos"])
+    vel = np.array(sat["vel"])
+    fuel = sat.get("fuel_kg", 0.0)
+    mass = sat.get("mass_kg", ME.DRY_MASS + fuel)
+
+    elements = ME.state_to_elements(pos, vel)
+    los = ME.ground_station_los(pos)
+    slot = ME.check_station_keeping(sat_id, pos)
+    cooldown_ok, cd_msg = ME.schedule_store.can_execute(sat_id)
+    max_dv = ME.dv_for_fuel(fuel, mass)
+
+    return {
+        "satellite_id": sat_id,
+        "position_km": pos.tolist(),
+        "velocity_kms": vel.tolist(),
+        "orbital_elements": elements,
+        "fuel_kg": round(fuel, 3),
+        "fuel_percent": round(fuel / ME.FUEL_INIT * 100, 2),
+        "mass_kg": round(mass, 2),
+        "max_dv_kms": round(max_dv, 5),
+        "eol_warning": fuel / ME.FUEL_INIT * 100 < 5.0,
+        "los_stations": los,
+        "has_los": len(los) > 0,
+        "cooldown_ok": cooldown_ok,
+        "cooldown_msg": cd_msg,
+        "station_keeping": slot,
+        "metadata": store.objects[sat_id].get("metadata", {}),
+    }
+
+
+@app.get("/api/v2/conjunctions/{sat_id}")
+async def get_conjunctions_v2(sat_id: str, hours: float = 24.0):
+    """24-hour collision prediction using spatial grid + RK4 propagation."""
+    sat = _get_sat(sat_id)
+    pos = np.array(sat["pos"])
+    vel = np.array(sat["vel"])
+
+    # Sync spatial grid
+    for oid, obj in store.objects.items():
+        ME.spatial_grid.update(oid, np.array(obj["pos"]), np.array(obj["vel"]), obj.get("type", "DEBRIS"))
+
+    conjunctions = ME.predict_conjunction(sat_id, pos, vel, store.objects, hours=hours)
+    return {
+        "satellite_id": sat_id,
+        "conjunctions": conjunctions,
+        "total": len(conjunctions),
+        "critical": sum(1 for c in conjunctions if c["critical"]),
+        "warnings": sum(1 for c in conjunctions if c["risk"] == "yellow"),
+    }
+
+
+@app.post("/api/v2/cola/auto")
+async def auto_cola(req: COLARequest):
+    """Autonomously compute and apply collision avoidance maneuver."""
+    sat = _get_sat(req.satellite_id)
+    pos = np.array(sat["pos"])
+    vel = np.array(sat["vel"])
+
+    # Sync spatial grid
+    for oid, obj in store.objects.items():
+        ME.spatial_grid.update(oid, np.array(obj["pos"]), np.array(obj["vel"]), obj.get("type", "DEBRIS"))
+
+    # Find nearest threat
+    threats = ME.predict_conjunction(req.satellite_id, pos, vel, store.objects, hours=2.0, step_s=30.0)
+    if not threats:
+        return {"status": "SAFE", "message": "No threats detected in 2-hour window"}
+
+    top = threats[0]
+    if top["min_distance_km"] > 5.0:
+        return {"status": "SAFE", "message": f"Nearest object {top['object_id']} at {top['min_distance_km']:.2f} km — no action needed"}
+
+    # Compute avoidance dv
+    threat_obj = store.objects.get(top["object_id"])
+    if not threat_obj:
+        return {"status": "ERROR", "message": "Threat object not found"}
+
+    dv_eci = ME.compute_avoidance_dv(
+        pos, vel,
+        np.array(threat_obj["pos"]), np.array(threat_obj["vel"]),
+        req.dv_budget_kms,
+    )
+    R = ME.rtn_to_eci_matrix(pos, vel)
+    dv_rtn = R.T @ dv_eci
+
+    result = ME.apply_rtn_burn(
+        sat, float(dv_rtn[0]), float(dv_rtn[1]), float(dv_rtn[2]),
+        check_los=False,   # Autonomous COLA bypasses LOS
+        check_cooldown=not req.bypass_cooldown,
+        sat_id=req.satellite_id,
+    )
+    if result["status"] == "EXECUTED":
+        store.update_object(req.satellite_id, sat["pos"], sat["vel"],
+                            store.objects[req.satellite_id]["timestamp"], "SATELLITE")
+        store.objects[req.satellite_id]["fuel_kg"] = sat["fuel_kg"]
+        store.objects[req.satellite_id]["mass_kg"] = sat["mass_kg"]
+
+    return {
+        "status": result["status"],
+        "threat": top,
+        "avoidance": result,
+    }
+
+
+@app.post("/api/v2/orbit/recommend")
+async def recommend_orbit(req: OrbitRecommendRequest):
+    """Evaluate candidate orbits and return scored list (min fuel + max safety)."""
+    sat = _get_sat(req.satellite_id)
+    pos = np.array(sat["pos"])
+    vel = np.array(sat["vel"])
+    fuel = sat.get("fuel_kg", 0.0)
+    mass = sat.get("mass_kg", ME.DRY_MASS + fuel)
+
+    recommendations = ME.recommend_orbits(
+        req.satellite_id, pos, vel, fuel, mass,
+        store.objects, req.candidate_altitudes_km
+    )
+    return {
+        "satellite_id": req.satellite_id,
+        "current_altitude_km": round(np.linalg.norm(pos) - ME.R_E, 2),
+        "current_fuel_kg": round(fuel, 3),
+        "recommendations": recommendations,
+    }
+
+
+@app.get("/api/v2/fuel/fleet")
+async def fleet_fuel_status():
+    """Real-time fuel budget for all satellites."""
+    sats = []
+    for sid, obj in store.objects.items():
+        if obj.get("type") != "SATELLITE":
+            continue
+        fuel = obj.get("fuel_kg", 0.0)
+        mass = obj.get("mass_kg", ME.DRY_MASS)
+        pct  = fuel / ME.FUEL_INIT * 100
+        max_dv = ME.dv_for_fuel(fuel, mass)
+        sats.append({
+            "satellite_id": sid,
+            "fuel_kg": round(fuel, 3),
+            "fuel_percent": round(pct, 2),
+            "dry_mass_kg": ME.DRY_MASS,
+            "total_mass_kg": round(mass, 2),
+            "max_dv_kms": round(max_dv, 5),
+            "eol_warning": pct < 5.0,
+            "status": "EOL" if pct < 5.0 else ("LOW" if pct < 25.0 else "NOMINAL"),
+        })
+    sats.sort(key=lambda x: x["fuel_percent"])
+    return {
+        "satellites": sats,
+        "total_fuel_kg": round(sum(s["fuel_kg"] for s in sats), 2),
+        "fleet_avg_pct": round(sum(s["fuel_percent"] for s in sats)/max(len(sats),1), 2),
+        "eol_count": sum(1 for s in sats if s["eol_warning"]),
+    }
+
+
+@app.get("/api/v2/station-keeping/{sat_id}")
+async def station_keeping_status(sat_id: str):
+    """Check station-keeping slot deviation."""
+    sat = _get_sat(sat_id)
+    result = ME.check_station_keeping(sat_id, np.array(sat["pos"]))
+    return {"satellite_id": sat_id, **result}
+
+
+@app.post("/api/v2/station-keeping/{sat_id}/set-slot")
+async def set_nominal_slot(sat_id: str):
+    """Register current orbit as the nominal station-keeping slot."""
+    sat = _get_sat(sat_id)
+    ME.schedule_store.set_nominal_slot(sat_id, np.array(sat["pos"]), np.array(sat["vel"]))
+    return {"satellite_id": sat_id, "slot_set": True,
+            "position_km": sat["pos"].tolist()}
+
+
+@app.post("/api/v2/station-keeping/{sat_id}/recover")
+async def recover_slot(sat_id: str):
+    """Apply small corrective burn to return toward nominal slot."""
+    sat = _get_sat(sat_id)
+    if sat_id not in ME.schedule_store.slots:
+        raise HTTPException(400, "No nominal slot defined for this satellite. Call /set-slot first.")
+    pos = np.array(sat["pos"])
+    vel = np.array(sat["vel"])
+    slot = ME.schedule_store.slots[sat_id]
+    dv_eci = ME.station_keeping_dv(pos, vel, slot["pos"], slot["vel"])
+    R = ME.rtn_to_eci_matrix(pos, vel)
+    dv_rtn = R.T @ dv_eci
+    result = ME.apply_rtn_burn(
+        sat, float(dv_rtn[0]), float(dv_rtn[1]), float(dv_rtn[2]),
+        check_los=False, check_cooldown=False, sat_id=sat_id
+    )
+    if result["status"] == "EXECUTED":
+        store.update_object(sat_id, sat["pos"], sat["vel"],
+                            store.objects[sat_id]["timestamp"], "SATELLITE")
+        store.objects[sat_id]["fuel_kg"] = sat["fuel_kg"]
+        store.objects[sat_id]["mass_kg"] = sat["mass_kg"]
+    return result
+
+
+@app.get("/api/v2/maneuver/history")
+async def maneuver_history():
+    """Return full maneuver history log."""
+    return {
+        "history": ME.schedule_store.history,
+        "scheduled": ME.schedule_store.scheduled,
+        "sim_time_s": ME.schedule_store.sim_time,
+        "cooldowns": {
+            k: {"last_burn": v, "ready_in_s": max(0, ME.COOLDOWN_S - (ME.schedule_store.sim_time - v))}
+            for k, v in ME.schedule_store.cooldowns.items()
+        },
+    }
+
+
+# =========================================================================
+# ORIGINAL MODELS (kept for compat)
+# =========================================================================
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -766,3 +1121,7 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/advanced")
     async def serve_advanced_dashboard():
         return FileResponse(os.path.join(FRONTEND_DIR, "advanced.html"))
+
+    @app.get("/maneuver")
+    async def serve_maneuver_dashboard():
+        return FileResponse(os.path.join(FRONTEND_DIR, "maneuver.html"))
