@@ -1,10 +1,24 @@
-import React from 'react';
-import { Activity, Layout, Layers, Cpu, Database } from 'lucide-react';
+import React, { useState } from 'react';
+import { Activity, Layout, Layers, Cpu, Database, Play, Loader2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import useTelemetryStore from '../store/useTelemetryStore';
 
 const PerformanceDashboard = () => {
-    const { simulationMetrics } = useTelemetryStore();
+    const { simulationMetrics, startHighFreqSim } = useTelemetryStore();
     const { performance } = simulationMetrics;
+    const [simLoading, setSimLoading] = useState(false);
+
+    const handleStartSim = async () => {
+        setSimLoading(true);
+        try {
+            await startHighFreqSim();
+            alert("High-Frequency Telemetry Simulator Started (telemetry_sim.py)");
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setSimLoading(false);
+        }
+    };
 
     const stats = [
         { label: 'TRACKED BODIES', value: performance?.objects_tracked || 0, icon: Database, color: 'text-accent' },
@@ -15,9 +29,19 @@ const PerformanceDashboard = () => {
 
     return (
         <div className="bg-[#111116] border border-[#ffffff10] rounded-xl p-5 flex flex-col gap-5">
-            <h3 className="text-[11px] text-accent tracking-[0.2em] uppercase flex items-center gap-2 font-black italic">
-                <Activity className="w-3 h-3 text-accent" /> System Performance
-            </h3>
+            <div className="flex items-center justify-between">
+                <h3 className="text-[11px] text-accent tracking-[0.2em] uppercase flex items-center gap-2 font-black italic">
+                    <Activity className="w-3 h-3 text-accent" /> System Performance
+                </h3>
+                <button 
+                    onClick={handleStartSim}
+                    disabled={simLoading}
+                    className="p-1 px-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[8px] font-black uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-500 hover:text-black transition-all"
+                >
+                    {simLoading ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Play className="w-2.5 h-2.5 fill-current" />}
+                    Ignite Simulator
+                </button>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
                 {stats.map((stat, i) => (

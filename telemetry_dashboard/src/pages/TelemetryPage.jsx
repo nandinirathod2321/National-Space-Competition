@@ -21,6 +21,8 @@ import GroundStationMap from '../components/GroundStationMap';
 import PerformanceDashboard from '../components/PerformanceDashboard';
 import CommandValidationPanel from '../components/CommandValidationPanel';
 import RTNVisualizer from '../components/RTNVisualizer';
+import FleetHeatmap from '../components/FleetHeatmap';
+import ManeuverHistory from '../components/ManeuverHistory';
 
 const TelemetryPage = () => {
     const { 
@@ -283,6 +285,21 @@ const TelemetryPage = () => {
                                         satelliteId={selectedSatId} 
                                         visibleStations={selectedSat.visibleStations} 
                                     />
+                                </motion.div>
+
+                                {/* Fleet Intelligence & Operation History */}
+                                <motion.div 
+                                    className="col-span-12 lg:col-span-6 row-span-4"
+                                    initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}
+                                >
+                                    <FleetHeatmap />
+                                </motion.div>
+
+                                <motion.div 
+                                    className="col-span-12 lg:col-span-6 row-span-4"
+                                    initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }}
+                                >
+                                    <ManeuverHistory />
                                 </motion.div>
                             </>
                         )}

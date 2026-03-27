@@ -33,7 +33,7 @@ from schemas import (
 
 from state_store import store
 from physics_engine import rk4_step, get_eci_to_rtn_matrix, calculate_fuel_consumed
-from global_map import acm_global_map, SpaceObject, Vector3D
+from global_map import SpaceObject, Vector3D, acm_global_map
 from orbital_mechanics import (
     state_to_orbital_elements, 
     orbital_elements_to_state, 
@@ -47,7 +47,6 @@ import maneuver_engine as ME
 from telemetry_manager import telemetry_manager
 from orbit_propagator import propagator
 from kepler_converter import converter
-from collision_engine import collision_engine
 from decision_engine import decision_engine
 
 # --- New v3 Imports ---
@@ -1588,14 +1587,46 @@ async def get_fleet_heatmap():
     for sid, sat in store.objects.items():
         if sat.get("type") != "SATELLITE":
             continue
+        
+        # Calculate derived metrics
+        fuel_current = float(sat.get("fuel_kg", 0))
+        fuel_pct = min(100.0, (fuel_current / 120.0) * 100)
+        
+        # Simple health heuristic
+        health = "nominal"
+        if fuel_pct < 10: health = "critical"
+        elif fuel_pct < 25: health = "warning"
+        
         stats.append({
             "id": sid,
-            "fuel": float(sat.get("fuel_kg", 0)),
-            "fuel_pct": min(100.0, (float(sat.get("fuel_kg", 0)) / 120.0) * 100),
+            "fuel": fuel_current,
+            "fuel_pct": fuel_pct,
             "mass": float(sat.get("mass_kg", 0)),
+            "health": health,
+            "altitude_km": float(np.linalg.norm(sat["pos"]) - 6378.137),
             "last_seen": datetime.now().timestamp()
         })
     return stats
+
+@app.post("/api/simulation/start-telemetry")
+async def start_telemetry_simulator():
+    """Triggers the standalone telemetry_sim.py process to feed live data."""
+    import subprocess
+    import sys
+    
+    sim_path = os.path.join(BASE_DIR, "akashveer_solution", "telemetry_sim.py")
+    if not os.path.exists(sim_path):
+        sim_path = os.path.join(CURRENT_DIR, "telemetry_sim.py")
+        
+    try:
+        # Start as a detached process
+        subprocess.Popen([sys.executable, sim_path], 
+                         stdout=subprocess.DEVNULL, 
+                         stderr=subprocess.DEVNULL,
+                         creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+        return {"status": "STARTED", "process": "telemetry_sim.py"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start simulator: {str(e)}")
 
 @app.get("/api/gantt")
 async def get_maneuver_gantt():

@@ -20,6 +20,32 @@ const useTelemetryStore = create((set) => ({
         performance: { objects_tracked: 0, compute_time_ms: 0 }
     },
 
+    fleetHeatmap: [],
+    maneuverGantt: { events: [], scheduled: [] },
+
+    fetchFleetHeatmap: async () => {
+        try {
+            const resp = await fetch('/api/heatmap');
+            const data = await resp.json();
+            set({ fleetHeatmap: data });
+        } catch (e) { console.error("Heatmap Fetch Error:", e); }
+    },
+
+    fetchManeuverGantt: async () => {
+        try {
+            const resp = await fetch('/api/gantt');
+            const data = await resp.json();
+            set({ maneuverGantt: data });
+        } catch (e) { console.error("Gantt Fetch Error:", e); }
+    },
+
+    startHighFreqSim: async () => {
+        try {
+            const resp = await fetch('/api/simulation/start-telemetry', { method: 'POST' });
+            return await resp.json();
+        } catch (e) { console.error("Sim Trigger Error:", e); }
+    },
+
     updateSimulationMetrics: (metrics) => set((state) => {
         const newHistory = [...state.simulationMetrics.energyHistory, {
             time: Date.now(),
