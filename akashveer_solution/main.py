@@ -55,6 +55,10 @@ from ground_station_engine import gs_engine
 from command_validator import validator
 from rtn_transform import rtn_calc
 
+# ── Directory Paths ──
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
+REACT_TELEMETRY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist-telemetry"))
+
 # Global registries for simulation state
 object_metadata: Dict[str, Any] = {}
 simulation_telemetry: Dict[str, Any] = {}
@@ -178,12 +182,15 @@ class TelemetryInbound(BaseModel):
 
 @app.get("/")
 async def root():
+    """Serve the main dashboard HTML."""
+    frontend_index = os.path.join(FRONTEND_DIR, "index.html")
+    if os.path.exists(frontend_index):
+        return FileResponse(frontend_index)
+    # Fallback API response if HTML not found
     return {"status": "online", "service": "Akashveer"}
 
 
 # ── New React Telemetry Routes ───────────────────────────────────────────
-REACT_TELEMETRY_DIR = os.path.abspath(os.path.join(BASE_DIR, "dist-telemetry"))
-
 @app.get("/telemetry", response_class=FileResponse)
 async def serve_telemetry_index():
     index_path = os.path.join(REACT_TELEMETRY_DIR, "index.html")
@@ -486,11 +493,6 @@ async def get_status():
     }
 
 
-@app.post("/api/reload-data")
-async def reload_data():
-    """Reload demo and CSV data"""
-    await seed_demo_data()
-    load_ground_station_data()
     return {"status": "reloaded"}
 
 
@@ -889,6 +891,8 @@ def load_ground_station_data():
     objects = []
     successful = 0
     failed = 0
+    debris_count = 0
+    sat_count = 0
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
         for row_num, row in enumerate(reader, 1):
@@ -907,6 +911,15 @@ def load_ground_station_data():
                 # Check for DEBRIS or PAYLOAD in row
                 row_type = row.get('OBJECT_TYPE', 'DEBRIS').strip().upper()
                 obj_type = 'SATELLITE' if 'PAYLOAD' in row_type else 'DEBRIS'
+                
+                if obj_type == 'DEBRIS':
+                    if debris_count >= 5000:
+                        continue
+                    debris_count += 1
+                else:
+                    if sat_count >= 150:
+                        continue
+                    sat_count += 1
                 
                 a = float(semimajor)
                 e = float(ecc)
@@ -953,10 +966,6 @@ def load_ground_station_data():
                 
                 # Store metadata for later use
                 object_metadata[obj_id] = metadata
-                
-                # Limit to first 2500 for demo to ensure dense debris environment
-                if len(objects) >= 2500:
-                    break
                     
             except (ValueError, KeyError) as ex:
                 failed += 1
@@ -1668,9 +1677,9 @@ async def get_system_performance():
     }
 
 # =========================================================================
+# =========================================================================
 # ORIGINAL MODELS (kept for compat)
 # =========================================================================
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
@@ -1684,10 +1693,9 @@ if os.path.isdir(FRONTEND_DIR):
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
 
 # --- React Dashboard Mounting ---
-TELEMETRY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist-telemetry"))
-if os.path.isdir(TELEMETRY_DIR):
+if os.path.isdir(REACT_TELEMETRY_DIR):
     # Mount at /telemetry for the React build
-    app.mount("/telemetry", StaticFiles(directory=TELEMETRY_DIR, html=True), name="telemetry")
+    app.mount("/telemetry", StaticFiles(directory=REACT_TELEMETRY_DIR, html=True), name="telemetry")
     
     @app.get("/docs-dashboard")  
     async def serve_docs_dashboard():

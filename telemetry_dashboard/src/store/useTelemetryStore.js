@@ -25,7 +25,7 @@ const useTelemetryStore = create((set) => ({
 
     fetchFleetHeatmap: async () => {
         try {
-            const resp = await fetch('/api/heatmap');
+            const resp = await fetch('/api/telemetry-heatmap');
             const data = await resp.json();
             set({ fleetHeatmap: data });
         } catch (e) { console.error("Heatmap Fetch Error:", e); }
@@ -33,7 +33,7 @@ const useTelemetryStore = create((set) => ({
 
     fetchManeuverGantt: async () => {
         try {
-            const resp = await fetch('/api/gantt');
+            const resp = await fetch('/api/maneuver-timeline');
             const data = await resp.json();
             set({ maneuverGantt: data });
         } catch (e) { console.error("Gantt Fetch Error:", e); }
@@ -41,25 +41,30 @@ const useTelemetryStore = create((set) => ({
 
     startHighFreqSim: async () => {
         try {
-            const resp = await fetch('/api/simulation/start-telemetry', { method: 'POST' });
+            const resp = await fetch('/api/seed-demo', { method: 'POST' });
             return await resp.json();
         } catch (e) { console.error("Sim Trigger Error:", e); }
     },
 
-    updateSimulationMetrics: (metrics) => set((state) => {
+    updateSimulationMetrics: (message) => set((state) => {
+        // Handle both flattened API response and nested WS message
+        const metrics = message.metrics || message;
+        const decisions = message.decisions || metrics.decisions || state.simulationMetrics.fleetDecisions;
+        const visibility = message.visibility || metrics.visibility || state.simulationMetrics.visibility;
+
         const newHistory = [...state.simulationMetrics.energyHistory, {
             time: Date.now(),
             energy: metrics.energy || 0,
             error: metrics.energy_error || 0
-        }].slice(-100);
+        }].slice(-200); // Increased history buffer
 
         return {
             simulationMetrics: {
                 ...state.simulationMetrics,
                 ...metrics,
                 energyHistory: newHistory,
-                fleetDecisions: metrics.decisions || state.simulationMetrics.fleetDecisions,
-                visibility: metrics.visibility || state.simulationMetrics.visibility
+                fleetDecisions: decisions,
+                visibility: visibility
             }
         };
     }),
@@ -104,10 +109,6 @@ const useTelemetryStore = create((set) => ({
     updateTelemetry: (data) => {
         set((state) => {
             const satId = data.satellite_id;
-            const decision = state.simulationMetrics.fleetDecisions[satId] || {};
-            const threat = decision.threat || {};
-            const visibleStations = state.simulationMetrics.visibility[satId] || [];
-
             const existing = state.satellites[satId] || {
                 history: [],
                 position: [0, 0, 0],
@@ -117,13 +118,12 @@ const useTelemetryStore = create((set) => ({
                 autoMode: false
             };
 
-            // Update history and cap at 100 points
             const newHistory = [...existing.history, {
                 timestamp: data.timestamp,
                 fuel: data.fuel_kg,
                 velocity_mag: Math.sqrt(data.vel[0]**2 + data.vel[1]**2 + data.vel[2]**2),
-                collision_probability: threat.probability || 0
-            }].slice(-100);
+                collision_probability: 0
+            }].slice(-60);
 
             return {
                 satellites: {
@@ -134,52 +134,10 @@ const useTelemetryStore = create((set) => ({
                         velocity: data.vel,
                         fuel: data.fuel_kg,
                         timestamp: data.timestamp,
-                        history: newHistory,
-                        collisionRisk: threat,
-                        decision: decision,
-                        autoMode: decision.auto_executable || false,
-                        visibleStations: visibleStations
+                        history: newHistory
                     }
                 }
             };
-        });
-
-        // Trigger side-effects (alerts)
-        if (data.fuel_kg < 5) {
-            set((state) => {
-                const alreadyAlerted = state.alerts.some(a => a.id === `fuel-${data.satellite_id}`);
-                if (alreadyAlerted) return state;
-
-                return {
-                    alerts: [{
-                        id: `fuel-${data.satellite_id}`,
-                        type: 'error',
-                        title: 'Critical Fuel Alert',
-                        message: `${data.satellite_id} propellant levels are below 5kg. Maintenance required.`
-                    }, ...state.alerts].slice(0, 5)
-                };
-            });
-        }
-
-        // Collision Alert
-        const satId = data.satellite_id;
-        set((state) => {
-            const decision = state.simulationMetrics.fleetDecisions[satId] || {};
-            const threat = decision.threat || {};
-            if (threat.probability > 0.01) {
-                const alreadyAlerted = state.alerts.some(a => a.id === `collision-${satId}`);
-                if (alreadyAlerted) return state;
-
-                return {
-                    alerts: [{
-                        id: `collision-${satId}`,
-                        type: threat.risk_level === 'critical' ? 'error' : 'warning',
-                        title: 'Orbital Intersection Detected',
-                        message: `Risk level ${threat.risk_level.toUpperCase()}. Prob: ${(threat.probability * 100).toFixed(2)}% with ${threat.object_id}.`
-                    }, ...state.alerts].slice(0, 5)
-                };
-            }
-            return state;
         });
     },
 

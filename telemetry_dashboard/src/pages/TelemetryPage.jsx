@@ -80,7 +80,7 @@ const TelemetryPage = () => {
             stopTelemetryWS();
             clearInterval(poller);
         };
-    }, [connectionStatus]);
+    }, []); // Run on mount only
 
     // Cleanup trajectory after 10s
     useEffect(() => {
@@ -148,10 +148,8 @@ const TelemetryPage = () => {
             <main className="p-6 grid grid-cols-12 gap-6 h-[calc(100vh-64px)] overflow-hidden">
                 
                 {/* 1. Fleet Selection */}
-                <div className="col-span-12 md:col-span-3 lg:col-span-2 h-full overflow-hidden flex flex-col gap-6">
-                    <div className="flex-1 overflow-hidden">
-                        <SatelliteList />
-                    </div>
+                <div className="col-span-12 md:col-span-3 lg:col-span-2 h-full flex flex-col gap-6 overflow-hidden">
+                    <SatelliteList />
                     <TimeControlPanel />
                     <StabilityPanel metrics={simulationMetrics} />
                 </div>
@@ -166,8 +164,8 @@ const TelemetryPage = () => {
                             >
                                 <div className="col-span-12 lg:col-span-4 flex flex-col gap-6">
                                     <OrbitInitializationPanel />
-                                    <div className="bg-purple-900/10 border border-purple-500/20 rounded-2xl p-6">
-                                        <h4 className="text-[10px] text-purple-300 font-black uppercase tracking-widest mb-2 italic">Astrodynamics Briefing</h4>
+                                    <div className="bg-blue-900/10 border border-blue-500/20 rounded-2xl p-6">
+                                        <h4 className="text-[10px] text-blue-300 font-black uppercase tracking-widest mb-2 italic">Astrodynamics Briefing</h4>
                                         <p className="text-[9px] text-white/50 leading-relaxed uppercase font-bold">
                                             New payloads are automatically propagated via RK4 after initialization. Use the "Manual Burn" tab in the Maneuver Console to fine-tune states.
                                         </p>
@@ -265,7 +263,7 @@ const TelemetryPage = () => {
                                         title="Velocity Magnitude (km/s)" 
                                         data={selectedSat.history} 
                                         dataKey="velocity_mag" 
-                                        color="#A855F7" 
+                                        color="#1e90ff" 
                                         type="line" 
                                     />
                                 </motion.div>

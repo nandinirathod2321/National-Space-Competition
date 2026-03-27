@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Globe, Loader2, CheckCircle2, AlertTriangle, Database, Info } from 'lucide-react';
+import { Globe, Loader2, CheckCircle2, AlertTriangle, Database, Info, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const OrbitInitializationPanel = () => {

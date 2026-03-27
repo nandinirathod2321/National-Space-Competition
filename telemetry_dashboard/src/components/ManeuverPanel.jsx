@@ -61,12 +61,12 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
     return (
         <div className="flex flex-col gap-6">
             <div className="bg-black/80 border border-white/10 rounded-2xl p-6 flex flex-col gap-6 shadow-2xl backdrop-blur-xl relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 blur-[80px] -z-10 group-hover:bg-purple-500/10 transition-colors" />
+                <div className="absolute top-0 right-0 w-32 h-32 bg-accent/5 blur-[80px] -z-10 group-hover:bg-accent/10 transition-colors" />
                 
                 <div className="flex items-center justify-between">
                     <div className="flex flex-col">
                         <h3 className="text-[12px] text-white/90 tracking-[0.3em] font-black uppercase flex items-center gap-2 italic">
-                            <Rocket className="w-4 h-4 text-purple-400" /> Maneuver Console
+                            <Rocket className="w-4 h-4 text-accent" /> Maneuver Console
                         </h3>
                         <span className="text-[9px] text-white/30 font-bold uppercase tracking-widest mt-1">Unified Astrodynamics Engine v3.0</span>
                     </div>
@@ -88,7 +88,7 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
                                 onClick={() => setType(m.id)}
                                 className={`p-2 rounded-xl border flex flex-col items-center gap-2 transition-all duration-300 ${
                                     type === m.id 
-                                    ? 'bg-purple-600/20 border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.2)] text-white' 
+                                    ? 'bg-accent/20 border-accent/60 shadow-[0_0_15px_rgba(30,144,255,0.2)] text-white' 
                                     : 'bg-white/5 border-white/5 text-white/40 hover:bg-white/10 hover:border-white/20'
                                 }`}
                             >
@@ -113,7 +113,7 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
                                     type="number" 
                                     value={params.target_alt}
                                     onChange={(e) => setParams({...params, target_alt: e.target.value})}
-                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-purple-500/50 transition-all"
+                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-accent/50 transition-all"
                                 />
                             </div>
                         )}
@@ -125,7 +125,7 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
                                     type="number" 
                                     value={params.delta_inc}
                                     onChange={(e) => setParams({...params, delta_inc: e.target.value})}
-                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-purple-500/50 transition-all"
+                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-accent/50 transition-all"
                                 />
                             </div>
                         )}
@@ -137,7 +137,7 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
                                     type="number" 
                                     value={params.delta_alt}
                                     onChange={(e) => setParams({...params, delta_alt: e.target.value})}
-                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-purple-500/50 transition-all"
+                                    className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-accent/50 transition-all"
                                 />
                             </div>
                         )}
@@ -161,7 +161,7 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
                                             step="0.001"
                                             value={params[axis.toLowerCase()]}
                                             onChange={(e) => setParams({...params, [axis.toLowerCase()]: e.target.value})}
-                                            className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-purple-500/50 transition-all"
+                                            className="bg-white/5 border border-white/10 rounded-xl p-3 text-xs font-mono text-white focus:outline-none focus:border-accent/50 transition-all"
                                         />
                                     </div>
                                 ))}
@@ -176,7 +176,7 @@ const ManeuverPanel = ({ satelliteId, fuel, onManeuverComplete }) => {
                     className={`w-full py-4 rounded-xl font-black text-[10px] tracking-[0.4em] flex items-center justify-center gap-2 uppercase transition-all duration-500 ${
                         loading ? 'bg-white/5 text-white/20 cursor-wait' : 
                         isCritical ? 'bg-red-950/20 text-red-900 border border-red-900/30 cursor-not-allowed' :
-                        'bg-purple-600/20 text-purple-400 border border-purple-500/30 hover:bg-purple-500 hover:text-white hover:shadow-[0_0_30px_rgba(168,85,247,0.4)] active:scale-[0.98]'
+                        'bg-accent/20 text-accent border border-accent/30 hover:bg-accent hover:text-white hover:shadow-[0_0_30px_rgba(30,144,255,0.4)] active:scale-[0.98]'
                     }`}
                 >
                     {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Rocket className="w-4 h-4" />}

@@ -18,14 +18,14 @@ const OrbitView = ({ satelliteId, telemetry, transferTrajectory }) => {
     return (
         <div className="h-full bg-black/80 border border-white/10 rounded-2xl p-6 relative overflow-hidden flex flex-col shadow-2xl backdrop-blur-md">
             <h3 className="text-[11px] text-white/50 tracking-[0.4em] uppercase mb-6 flex items-center gap-3 font-black italic">
-                <Navigation2 className="w-4 h-4 text-purple-500 animate-pulse" /> ECI Reference Plane
+                <Navigation2 className="w-4 h-4 text-accent animate-pulse" /> ECI Reference Plane
             </h3>
             
-            <div className="flex-1 relative flex items-center justify-center p-4 border border-white/5 rounded-2xl bg-[radial-gradient(circle_at_center,rgba(123,47,255,0.03)_0%,transparent_80%)]">
+            <div className="flex-1 relative flex items-center justify-center p-4 border border-white/5 rounded-2xl bg-[radial-gradient(circle_at_center,rgba(30,144,255,0.03)_0%,transparent_80%)]">
                 {/* Earth Representative Circle */}
-                <div className="absolute w-32 h-32 rounded-full border-2 border-purple-500/20 flex items-center justify-center bg-purple-500/5 shadow-[0_0_50px_rgba(168,85,247,0.1)]">
-                    <div className="absolute w-40 h-40 rounded-full border border-purple-500/10 animate-spin-slow" />
-                    <div className="w-20 h-20 rounded-full bg-[radial-gradient(circle_at_30%_30%,#7b2fff22,#000000)] border border-white/5" />
+                <div className="absolute w-32 h-32 rounded-full border-2 border-accent/20 flex items-center justify-center bg-accent/5 shadow-[0_0_50px_rgba(30,144,255,0.1)]">
+                    <div className="absolute w-40 h-40 rounded-full border border-accent/10 animate-spin-slow" />
+                    <div className="w-20 h-20 rounded-full bg-[radial-gradient(circle_at_30%_30%,rgba(30,144,255,0.14),#000000)] border border-white/5" />
                 </div>
 
                 {/* Transfer Trajectory (Hohmann/Phasing) */}
@@ -37,7 +37,7 @@ const OrbitView = ({ satelliteId, telemetry, transferTrajectory }) => {
                                 return `${pt.x}%,${pt.y}%`;
                             }).join(' ')}
                             fill="none" 
-                            stroke="#A855F7" 
+                            stroke="#1e90ff" 
                             strokeWidth="1.5"
                             strokeDasharray="4 4"
                             initial={{ pathLength: 0, opacity: 0 }}
@@ -53,8 +53,8 @@ const OrbitView = ({ satelliteId, telemetry, transferTrajectory }) => {
                     transition={{ type: 'spring', bounce: 0, duration: 0.8 }}
                     className="absolute w-4 h-4 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-20 group"
                 >
-                    <div className="absolute w-12 h-12 rounded-full bg-purple-500/20 blur-xl group-hover:bg-purple-500/40 transition-colors" />
-                    <div className="absolute w-3 h-3 rounded-full bg-purple-500 shadow-[0_0_15px_#A855F7]" />
+                    <div className="absolute w-12 h-12 rounded-full bg-accent/20 blur-xl group-hover:bg-accent/40 transition-colors" />
+                    <div className="absolute w-3 h-3 rounded-full bg-accent shadow-[0_0_15px_#1e90ff]" />
                     <div className="absolute -top-6 text-[8px] text-white font-black tracking-[0.2em] uppercase whitespace-nowrap bg-black/40 px-2 py-0.5 rounded border border-white/10 backdrop-blur-sm">
                         {satelliteId}
                     </div>

@@ -59,18 +59,20 @@
   box-shadow: 0 0 50px rgba(30, 144, 255, 0.08);
 }
 
+/* Custom Scrollbar - Advanced Aesthetics */
 .custom-scrollbar::-webkit-scrollbar {
-  width: 3px;
+  width: 5px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #ffffff10;
+  background: rgba(30, 144, 255, 0.15);
   border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #ffffff20;
+  background: rgba(30, 144, 255, 0.3);
 }
 
 /* Data Display */
@@ -79,23 +81,24 @@
   letter-spacing: -0.05em;
 }
 
-/* Specific UI overrides to remove purple */
-.bg-purple-mid\/5 { background-color: rgba(30, 144, 255, 0.05) !important; }
-.text-purple-400 { color: #63b3ed !important; }
-.text-purple-300 { color: #90cdf4 !important; }
-.border-purple-500\/30 { border-color: rgba(30, 144, 255, 0.3) !important; }
-.bg-purple-500\/5 { background-color: rgba(30, 144, 255, 0.05) !important; }
-.bg-purple-600\/20 { background-color: rgba(30, 144, 255, 0.2) !important; }
-.border-purple-500 { border-color: #1e90ff !important; }
-.shadow-\[0_0_30px_rgba\(168\,85\,247\,0\.4\)\] { 
-  box-shadow: 0 0 30px rgba(30, 144, 255, 0.4) !important; 
+/* Celestial Theme Utilities */
+.text-accent { color: #1e90ff; }
+.bg-accent { background-color: #1e90ff; }
+.border-accent { border-color: #1e90ff; }
+
+.bg-celestial-dim { background-color: rgba(30, 144, 255, 0.05); }
+.bg-celestial-soft { background-color: rgba(30, 144, 255, 0.1); }
+.border-celestial-soft { border-color: rgba(30, 144, 255, 0.2); }
+.text-celestial-bright { color: #63b3ed; }
+.shadow-celestial { box-shadow: 0 0 30px rgba(30, 144, 255, 0.3); }
+
+
+/* Animation Overrides */
+.animate-spin-slow {
+  animation: spin 8s linear infinite;
 }
-.text-accent { color: #63b3ed !important; }
-.bg-purple-mid\/20 { background-color: rgba(30, 144, 255, 0.2) !important; }
-.bg-purple-900\/10 { background-color: rgba(13, 27, 42, 0.4) !important; }
-.border-purple-500\/20 { border-color: rgba(30, 144, 255, 0.2) !important; }
-.text-purple-300 { color: #63b3ed !important; }
-.bg-purple-500\/10 { background-color: rgba(30, 144, 255, 0.1) !important; }
-.text-purple-500 { color: #1e90ff !important; }
-.hover\:bg-purple-500:hover { background-color: #1e90ff !important; }
-.text-purple-300 { color: #63b3ed !important; }
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
