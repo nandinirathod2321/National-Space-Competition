@@ -1,33 +1,113 @@
 import os
 import sys
 
-# Ensure the repo root is on sys.path so shared modules like global_map can be imported
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+# Ensure the project root and current dir are on sys.path
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CURRENT_DIR = os.path.abspath(os.path.dirname(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
-from fastapi import FastAPI, HTTPException
+from typing import Optional, List, Dict, Any
+import numpy as np
+import math
+import csv
+import json
+import asyncio
+import time
+from datetime import datetime, timedelta, timezone
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from schemas import TelemetryPayload
+from pydantic import BaseModel
+
+from schemas import (
+    TelemetryPayload, KeplerianInitRequest, HohmannRequest, 
+    PlaneChangeRequest, PhasingRequest, KeplerianElements,
+    DecisionRequest, ExecuteDecisionRequest,
+    ClockControlRequest, CommandValidateRequest, RTNTransformRequest
+)
+
 from state_store import store
 from physics_engine import rk4_step, get_eci_to_rtn_matrix, calculate_fuel_consumed
 from global_map import acm_global_map, SpaceObject, Vector3D
-from orbital_mechanics import state_to_orbital_elements, orbital_elements_to_state, hohmann_transfer, circular_orbit_velocity, mean_anomaly_to_true_anomaly
+from orbital_mechanics import (
+    state_to_orbital_elements, 
+    orbital_elements_to_state, 
+    hohmann_transfer, 
+    circular_orbit_velocity, 
+    mean_anomaly_to_true_anomaly
+)
 from ground_track import subsatellite_point, terminator_line, predict_ground_track, historical_ground_track
 from conjunction_analysis import conjunctions_for_satellite
-from pydantic import BaseModel
 import maneuver_engine as ME
-import numpy as np
-from mission_manager import CommandPipeline, DecisionEngine, execute_autonomous_mission_step
-import asyncio
-from typing import Optional, List, Union
-# Global metadata store for object information
-object_metadata = {}
-import os
-import csv
-from datetime import datetime
+from telemetry_manager import telemetry_manager
+from orbit_propagator import propagator
+from kepler_converter import converter
+from collision_engine import collision_engine
+from decision_engine import decision_engine
+
+# --- New v3 Imports ---
+from simulation_clock import sim_clock
+from ground_station_engine import gs_engine
+from command_validator import validator
+from rtn_transform import rtn_calc
+
+# Global registries for simulation state
+object_metadata: Dict[str, Any] = {}
+simulation_telemetry: Dict[str, Any] = {}
+simulation_metrics: Dict[str, Any] = {
+    "energy": 0,
+    "energy_error": 0,
+    "dt": 1.0,
+    "stability": "stable"
+}
+
+# WebSocket Connection Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        if not self.active_connections:
+            return
+        
+        try:
+            payload = json.dumps(message)
+        except Exception as e:
+            print(f"❌ BROADCAST SERIALIZATION ERROR: {e}")
+            return
+            
+        print(f"📡 Broadcasting to {len(self.active_connections)} subscribers...")
+        
+        # Filter dead connections
+        dead_connections = []
+        tasks = []
+        for connection in self.active_connections:
+            try:
+                tasks.append(connection.send_text(payload))
+            except Exception:
+                dead_connections.append(connection)
+        
+        if dead_connections:
+            for dc in dead_connections:
+                self.disconnect(dc)
+
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+manager = ConnectionManager()
 
 app = FastAPI(title="Akashveer Telemetry Service")
 
@@ -89,10 +169,137 @@ class COLARequest(BaseModel):
     dv_budget_kms: float = 0.05
     bypass_cooldown: bool = False
 
+class TelemetryInbound(BaseModel):
+    satellite_id: str
+    timestamp: float
+    position: List[float] # [x, y, z] km
+    velocity: List[float] # [vx, vy, vz] km/s
+    fuel: float          # kg
+
 
 @app.get("/")
 async def root():
     return {"status": "online", "service": "Akashveer"}
+
+
+# ── New React Telemetry Routes ───────────────────────────────────────────
+REACT_TELEMETRY_DIR = os.path.abspath(os.path.join(BASE_DIR, "dist-telemetry"))
+
+@app.get("/telemetry", response_class=FileResponse)
+async def serve_telemetry_index():
+    index_path = os.path.join(REACT_TELEMETRY_DIR, "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html")) # Fallback if not built
+
+# Mount React static files
+if os.path.exists(REACT_TELEMETRY_DIR):
+    app.mount("/telemetry/assets", StaticFiles(directory=os.path.join(REACT_TELEMETRY_DIR, "assets")), name="telemetry-assets")
+
+@app.post("/api/telemetry")
+async def ingest_telemetry_batch(payload: TelemetryPayload):
+    """
+    Ingest a batch of telemetry objects (Legacy/Simulation format).
+    Updates simulation state and broadcasts to all subscribers.
+    """
+    for obj in payload.objects:
+        metadata = object_metadata.get(obj.id, {})
+        # Update simulation store
+        store.update_object(
+            obj.id,
+            [obj.r.x, obj.r.y, obj.r.z],
+            [obj.v.x, obj.v.y, obj.v.z],
+            payload.timestamp,
+            obj.type,
+            metadata
+        )
+        
+        # Track for global map
+        if obj.type == "SATELLITE":
+            telemetry_manager.ingest({
+                "satellite_id": obj.id,
+                "timestamp": payload.timestamp.timestamp(),
+                "position": [obj.r.x, obj.r.y, obj.r.z],
+                "velocity": [obj.v.x, obj.v.y, obj.v.z],
+                "fuel": 50.0 # Default starting fuel
+            })
+
+    # Broadcast update
+    await manager.broadcast({
+        "type": "TELEMETRY_BATCH",
+        "data": [o.dict() for o in payload.objects],
+        "timestamp": payload.timestamp.isoformat()
+    })
+    return {"status": "ACK", "count": len(payload.objects)}
+
+@app.post("/api/telemetry/v1")
+async def ingest_telemetry_single(data: TelemetryInbound):
+    """Ingest high-frequency telemetry for a single object (FastAPI/React format)."""
+    payload = data.dict()
+    is_valid, msg = telemetry_manager.validate(payload)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Validation failed: {msg}")
+    
+    state = telemetry_manager.ingest(payload)
+    
+    # Mirror into simulation state store
+    store.update_object(
+        state["satellite_id"],
+        state["pos"],
+        state["vel"],
+        datetime.fromtimestamp(state["timestamp"]),
+        "SATELLITE",
+        object_metadata.get(state["satellite_id"], {})
+    )
+    
+    if state["satellite_id"] in store.objects:
+        store.objects[state["satellite_id"]]["fuel_kg"] = state["fuel_kg"]
+
+    await manager.broadcast({"type": "TELEMETRY_UPDATE", "data": state})
+    return {"status": "ACK"}
+    
+@app.get("/api/states")
+async def get_all_states():
+    """Returns all tracked objects for the simulation (used by both 3D and Telemetry dashboards)."""
+    result = []
+    for obj_id, data in store.objects.items():
+        result.append({
+            "id": obj_id,
+            "type": data.get("type", "DEBRIS"),
+            "pos": data["pos"].tolist() if hasattr(data["pos"], 'tolist') else data["pos"],
+            "vel": data["vel"].tolist() if hasattr(data["vel"], 'tolist') else data["vel"],
+            "fuel_kg": float(data.get("fuel_kg", 0)),
+            "mass_kg": float(data.get("mass_kg", 0)),
+            "timestamp": str(data.get("timestamp", "")),
+            "metadata": object_metadata.get(obj_id, {})
+        })
+    return {"objects": result, "count": len(result)}
+
+@app.get("/api/objects")
+async def get_objects_alias():
+    return await get_all_states()
+
+
+@app.websocket("/ws/telemetry")
+async def telemetry_websocket(websocket: WebSocket):
+    """Real-time streaming pipe for satellite fleet status."""
+    await manager.connect(websocket)
+    try:
+        # Send initial state snapshot
+        await websocket.send_json({
+            "type": "INIT_SNAPSHOT",
+            "data": telemetry_manager.get_latest_state()
+        })
+        
+        while True:
+            # Keep connection open, wait for any incoming messages from client (optional)
+            data = await websocket.receive_text()
+            # Handle heartbeats or commands if needed
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        print(f"WS Error: {e}")
+        manager.disconnect(websocket)
 
 
 def autonomous_cola(sat_id):
@@ -146,86 +353,103 @@ def autonomous_cola(sat_id):
     return False
 
 
-@app.post("/api/telemetry")
-async def ingest_telemetry(payload: TelemetryPayload):
-    # 1. Update all object positions in the store
-    for obj in payload.objects:
-        store.update_object(
-            obj.id,
-            [obj.r.x, obj.r.y, obj.r.z],
-            [obj.v.x, obj.v.y, obj.v.z],
-            payload.timestamp,
-            obj.type,
-        )
 
-    # 1b. Keep the Global Map (Digital Twin) in sync
-    global_objs = []
-    for obj in payload.objects:
-        fuel = store.objects.get(obj.id, {}).get("fuel_kg", 50.0) if obj.type == "SATELLITE" else 0.0
-        global_objs.append(
-            SpaceObject(
-                id=obj.id,
-                type=obj.type,
-                r=Vector3D(x=obj.r.x, y=obj.r.y, z=obj.r.z),
-                v=Vector3D(x=obj.v.x, y=obj.v.y, z=obj.v.z),
-                fuel_kg=fuel,
-            )
-        )
-    acm_global_map.update_from_telemetry(payload.timestamp, global_objs)
-
-    # 2. Check for collisions and trigger AUTO-COLA
-    warnings = 0
-    all_objs = store.objects
-    for obj_id, data in all_objs.items():
-        if data.get("type") == "SATELLITE":
-            # Run the autonomous logic we defined above
-            autonomous_cola(obj_id)
-
-            # Still count warnings for the response (5km threshold)
-            current_key = store._get_grid_key(data["pos"])
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    for dz in [-1, 0, 1]:
-                        neighbor_key = (current_key[0] + dx, current_key[1] + dy, current_key[2] + dz)
-                        for other_id in store.grid.get(neighbor_key, []):
-                            if other_id == obj_id:
-                                continue
-                            dist = np.linalg.norm(data["pos"] - all_objs[other_id]["pos"])
-                            if dist < 5.0:  # 5km threshold
-                                warnings += 1
-
-    return {
-        "status": "ACK",
-        "processed_count": len(payload.objects),
-        "active_cdm_warnings": warnings,
-    }
 
 
 @app.post("/api/tick")
 async def simulation_tick(dt: float = 1.0):
+    """Refined simulation tick using high-accuracy propagator + autonomous logic."""
+    start_time = time.time()
     states = store.objects
+    count = 0
+    total_error = 0.0
+    total_energy = 0.0
+    
+    # AI Logic and Decisions
+    fleet_decisions = {}
+    
     for obj_id, data in states.items():
-        new_p, new_v = rk4_step(data["pos"], data["vel"], dt)
-        store.update_object(obj_id, new_p, new_v, data["timestamp"], data["type"])
+        # 1. High-Accuracy Propagate
+        result = propagator.propagate(obj_id, data["pos"], data["vel"], dt)
+        
+        # 2. Collision & Decision Analysis (Satellites only)
+        if data["type"] == "SATELLITE":
+            decision = decision_engine.evaluate_threat(obj_id, result["pos"], result["vel"], states)
+            fleet_decisions[obj_id] = decision
+            
+            # 3. Autonomous Execution
+            if decision["decision"] == "maneuver" and decision.get("auto_executable"):
+                dv_rtn = decision["suggested_dv_rtn_kms"]
+                res = ME.apply_rtn_burn(
+                    data, dv_rtn[0], dv_rtn[1], dv_rtn[2],
+                    check_los=False, check_cooldown=True, sat_id=obj_id
+                )
+                if res["status"] == "EXECUTED":
+                    # Update state again with new velocity
+                    result["vel"] = np.array(data["vel"])
+                    decision["executed"] = True
+                    decision["burn_details"] = res
 
-    return {"status": "OK", "new_states_count": len(states)}
-
-
-@app.get("/api/states")
-async def get_all_states():
-    """Returns all tracked objects for the frontend 3D visualization."""
-    result = []
-    for obj_id, data in store.objects.items():
-        result.append({
-            "id": obj_id,
-            "type": data.get("type", "DEBRIS"),
-            "pos": data["pos"].tolist(),
-            "vel": data["vel"].tolist(),
-            "fuel_kg": data.get("fuel_kg", 0),
-            "mass_kg": data.get("mass_kg", 0),
-            "timestamp": str(data.get("timestamp", "")),
+        # 4. Update store with new state
+        store.update_object(
+            obj_id, 
+            result["pos"], 
+            result["vel"], 
+            data["timestamp"], 
+            data["type"],
+            object_metadata.get(obj_id, {})
+        )
+        
+        # Preserve mass/fuel from internal state
+        if data["type"] == "SATELLITE":
+            store.objects[obj_id]["fuel_kg"] = data.get("fuel_kg", 100.0)
+            store.objects[obj_id]["mass_kg"] = data.get("mass_kg", 500.0)
+        
+        total_error += result["energy_error"]
+        total_energy += result["energy"]
+        count += 1
+    
+    if count > 0:
+        simulation_metrics.update({
+            "energy": total_energy / count,
+            "energy_error": total_error / count,
+            "dt": propagator.current_dt,
+            "stability": propagator.stability,
+            "decisions": fleet_decisions
         })
-    return {"objects": result, "count": len(result)}
+
+    # Broadcast extended telemetry via WebSocket
+    # 6. Global Systems (Clock + GS)
+    sim_time = sim_clock.tick(1.0) # Tick 1s real time
+    visibility = gs_engine.get_fleet_visibility(store.objects, sim_clock.elapsed_sim_seconds)
+    
+    # Update metrics with new subsystems
+    simulation_metrics.update({
+        "time": sim_clock.get_state(),
+        "visible_stations_count": sum(len(v) for v in visibility.values()),
+        "performance": {
+            "objects_tracked": count,
+            "compute_time_ms": round((time.time() - start_time) * 1000, 2)
+        }
+    })
+
+    await manager.broadcast({
+        "type": "SIMULATION_UPDATE",
+        "metrics": simulation_metrics,
+        "object_count": count,
+        "decisions": fleet_decisions,
+        "visibility": visibility
+    })
+
+    return {"status": "OK", "metrics": simulation_metrics}
+
+@app.get("/api/simulation/metrics")
+async def get_simulation_metrics():
+    """Returns numerical stability and energy conservation metrics."""
+    return simulation_metrics
+
+
+# Removed duplicate get_all_states endpoint (already defined above)
 
 
 @app.post("/api/reload-data")
@@ -653,10 +877,14 @@ async def startup_seed_demo():
 def load_ground_station_data():
     """Load satellite and debris data from ground_station.csv"""
     print("Starting load_ground_station_data")
-    csv_path = os.path.join(ROOT_DIR, "ground_station.csv")
-    print(f"Looking for CSV at: {csv_path}")
+    # Check root first, then current dir
+    root_csv = os.path.join(BASE_DIR, "ground_station.csv")
+    curr_csv = os.path.join(CURRENT_DIR, "ground_station.csv")
+    
+    csv_path = root_csv if os.path.exists(root_csv) else curr_csv
+    
     if not os.path.exists(csv_path):
-        print("ground_station.csv not found, skipping data load")
+        print(f"❌ ground_station.csv not found at {root_csv} or {curr_csv}, skipping load")
         return
     
     objects = []
@@ -673,11 +901,13 @@ def load_ground_station_data():
                 raan = row['RA_OF_ASC_NODE'].strip()
                 arg_peri = row['ARG_OF_PERICENTER'].strip()
                 mean_anom = row['MEAN_ANOMALY'].strip()
-                obj_type = row['OBJECT_TYPE'].strip()
-                
-                if not semimajor or not ecc or not inc or not raan or not arg_peri or not mean_anom or not obj_type:
+                if not semimajor or not ecc or not inc or not raan or not arg_peri or not mean_anom:
                     failed += 1
                     continue
+                
+                # Check for DEBRIS or PAYLOAD in row
+                row_type = row.get('OBJECT_TYPE', 'DEBRIS').strip().upper()
+                obj_type = 'SATELLITE' if 'PAYLOAD' in row_type else 'DEBRIS'
                 
                 a = float(semimajor)
                 e = float(ecc)
@@ -692,9 +922,7 @@ def load_ground_station_data():
                 # Get position and velocity
                 r, vel = orbital_elements_to_state(a, e, i, raan_rad, w, v)
                 
-                obj_type = obj_type.upper()  # PAYLOAD, DEBRIS, ROCKET BODY
-                if obj_type == 'PAYLOAD':
-                    obj_type = 'SATELLITE'
+                # obj_type already normalized above
                 
                 # Create telemetry object
                 obj_id = row['OBJECT_ID'].strip() or row['NORAD_CAT_ID'].strip()
@@ -727,8 +955,8 @@ def load_ground_station_data():
                 # Store metadata for later use
                 object_metadata[obj_id] = metadata
                 
-                # Limit to first 100 for demo
-                if len(objects) >= 100:
+                # Limit to first 2500 for demo to ensure dense debris environment
+                if len(objects) >= 2500:
                     break
                     
             except (ValueError, KeyError) as ex:
@@ -790,81 +1018,10 @@ def _get_sat(sat_id: str) -> dict:
     return sat
 
 
-# ─── Mission Logic Loop ───────────────────────────────────────────────────────
-
-async def simulation_loop():
-    """Main simulation heartbeat. Advances physics and runs decision engine."""
-    counter = 0
-    while True:
-        try:
-            # Advance simulation time by 10s
-            ME.schedule_store.sim_time += 10
-            
-            # Execute scheduled burns
-            ME.schedule_store.execute_scheduled(store.objects)
-            
-            # Run Autonomous Mission Control every 30s instead of every 1s
-            if counter % 30 == 0:
-                execute_autonomous_mission_step()
-            
-            counter += 1
-            
-        except Exception as e:
-            print(f"[CRITICAL] Simulation Loop Error: {e}")
-        
-        await asyncio.sleep(1) # Run every real second for responsiveness
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(simulation_loop())
-
-
-# ─── New Mission-Grade APIs ───────────────────────────────────────────────────
-
-@app.get("/api/v2/mission/snapshot")
-async def mission_snapshot():
-    """Unified full-fleet snapshot for high-fidelity visualization."""
-    fleet = []
-    for sid, obj in store.objects.items():
-        if obj.get("type") == "SATELLITE":
-            pos = np.array(obj["pos"])
-            los = ME.ground_station_los(pos)
-            fleet.append({
-                "id": sid,
-                "pos": obj["pos"],
-                "vel": obj["vel"],
-                "fuel_kg": obj.get("fuel_kg", 0),
-                "fuel_pct": obj.get("fuel_kg", 0) / ME.FUEL_INIT * 100,
-                "has_los": len(los) > 0,
-                "status": "NOMINAL" if obj.get("fuel_kg", 0) > 5 else "EOL"
-            })
-    return {
-        "sim_time": ME.schedule_store.sim_time,
-        "gst_rad": ME.schedule_store.get_gst_rad(),
-        "satellites": fleet,
-        "debris_count": sum(1 for o in store.objects.values() if o.get("type") == "DEBRIS")
-    }
-
-@app.get("/api/v2/mission/timeline")
-async def mission_timeline():
-    """Returns chronologically ordered history of all mission events."""
-    return {
-        "history": ME.schedule_store.history,
-        "scheduled": ME.schedule_store.scheduled
-    }
-
-
 @app.post("/api/v2/maneuver/rtn")
 async def maneuver_rtn(req: RTNBurnRequest):
     """Apply an impulsive burn in RTN (Radial-Transverse-Normal) frame."""
     sat = _get_sat(req.satellite_id)
-    
-    # Mission-grade validation gate
-    dv = np.array([req.dv_r, req.dv_t, req.dv_n])
-    check = CommandPipeline.validate_maneuver(req.satellite_id, dv, req.bypass_los)
-    if not check["valid"] and not req.bypass_cooldown:
-        return {"status": "REJECTED", "reason": check["reason"]}
-
     # Keep numpy arrays in sync with maneuver engine
     ME.spatial_grid.update(req.satellite_id, sat["pos"], sat["vel"], "SATELLITE")
     result = ME.apply_rtn_burn(
@@ -887,7 +1044,6 @@ async def maneuver_rtn(req: RTNBurnRequest):
             "fuel_burned_kg": result["fuel_burned_kg"],
             "fuel_remaining_kg": result["fuel_remaining_kg"],
             "sim_time_s": ME.schedule_store.sim_time,
-            "burn_duration_s": check.get("burn_duration_s", 0)
         })
     return result
 
@@ -1171,6 +1327,316 @@ async def maneuver_history():
 
 
 # =========================================================================
+# ADVANCED ASTRODYNAMICS ENDPOINTS (KEPLERIAN + STRUCTURED MANEUVERS)
+# =========================================================================
+
+@app.post("/api/initialize")
+async def initialize_satellite(req: KeplerianInitRequest):
+    """Initialize a satellite using Keplerian elements."""
+    pos, vel = converter.kepler_to_cartesian(
+        req.keplerian.a, req.keplerian.e, req.keplerian.i,
+        req.keplerian.raan, req.keplerian.arg_perigee, req.keplerian.true_anomaly
+    )
+    
+    # Register in store
+    store.update_object(req.id, pos.tolist(), vel.tolist(), datetime.now().timestamp(), "SATELLITE")
+    store.objects[req.id]["fuel_kg"] = req.fuel
+    store.objects[req.id]["mass_kg"] = req.mass
+    
+    return {
+        "status": "INITIALIZED",
+        "id": req.id,
+        "cartesian": {"pos": pos.tolist(), "vel": vel.tolist()},
+        "elements": converter.cartesian_to_kepler(pos, vel)
+    }
+
+@app.post("/api/maneuver/hohmann")
+async def maneuver_hohmann(req: HohmannRequest):
+    """Execute a Hohmann transfer to a new circular altitude."""
+    sat = _get_sat(req.satellite_id)
+    r_cur_vec = np.array(sat["pos"])
+    r_cur = np.linalg.norm(r_cur_vec)
+    r_tgt = ME.R_E + req.target_altitude_km
+    
+    # Compute Δv (Transverse only)
+    # v1_trans, v_circ_2, v_trans_2 calculations are inside Hohmann utility
+    v_circ_1 = math.sqrt(ME.MU / r_cur)
+    a_trans  = (r_cur + r_tgt) / 2
+    v_trans_1 = math.sqrt(ME.MU * (2/r_cur - 1/a_trans))
+    dv1 = abs(v_trans_1 - v_circ_1)
+    
+    # Build Transfer Trajectory for Visualization
+    traj = []
+    p, v = r_cur_vec.copy(), np.array(sat["vel"]).copy()
+    # Boost velocity to transfer elliptical
+    R = ME.rtn_to_eci_matrix(p, v)
+    dv1_eci = R @ np.array([0.0, dv1, 0.0])
+    v += dv1_eci
+    
+    # Propagate half orbit (180 degrees)
+    period_trans = 2 * math.pi * math.sqrt(a_trans**3 / ME.MU)
+    dt_step = 60.0 # 1 minute steps
+    steps = int((period_trans / 2) / dt_step)
+    
+    for _ in range(steps):
+        p, v = ME.rk4_propagate(p, v, dt_step)
+        traj.append(p.tolist())
+    
+    # Final circularization Δv
+    v_circ_2 = math.sqrt(ME.MU / r_tgt)
+    v_trans_2 = math.sqrt(ME.MU * (2/r_tgt - 1/a_trans))
+    dv2 = abs(v_circ_2 - v_trans_2)
+    
+    # Apply BOTH burns sequentially for the final state
+    result = ME.apply_rtn_burn(sat, 0.0, float(dv1 + dv2), 0.0, sat_id=req.satellite_id)
+    if result["status"] == "EXECUTED":
+        store.update_object(req.satellite_id, sat["pos"], sat["vel"], datetime.now().timestamp(), "SATELLITE")
+        result["transfer_trajectory"] = traj  # Send points for frontend to draw
+        result["dv1_kms"] = round(dv1, 6)
+        result["dv2_kms"] = round(dv2, 6)
+        
+    return result
+
+@app.post("/api/maneuver/plane-change")
+async def maneuver_plane_change(req: PlaneChangeRequest):
+    """Execute an inclination plane change at the node."""
+    sat = _get_sat(req.satellite_id)
+    v_mag = np.linalg.norm(sat["vel"])
+    
+    # Compute Δv (Normal only)
+    dv_n = ME.plane_change_dv(v_mag, req.delta_inclination_deg)
+    
+    # Apply burn
+    result = ME.apply_rtn_burn(sat, 0.0, 0.0, float(dv_n), sat_id=req.satellite_id)
+    if result["status"] == "EXECUTED":
+        store.update_object(req.satellite_id, sat["pos"], sat["vel"], datetime.now().timestamp(), "SATELLITE")
+    
+    return result
+
+@app.post("/api/maneuver/phasing")
+async def maneuver_phasing(req: PhasingRequest):
+    """Execute a phasing burn to shift position in-track."""
+    sat = _get_sat(req.satellite_id)
+    elements = converter.cartesian_to_kepler(sat["pos"], sat["vel"])
+    
+    # Compute Δv (Transverse only)
+    dv_t = ME.phasing_maneuver_dv(elements["a"], req.delta_altitude_km)
+    
+    # Apply burn
+    result = ME.apply_rtn_burn(sat, 0.0, float(dv_t), 0.0, sat_id=req.satellite_id)
+    if result["status"] == "EXECUTED":
+        store.update_object(req.satellite_id, sat["pos"], sat["vel"], datetime.now().timestamp(), "SATELLITE")
+    
+    return result
+
+@app.post("/api/maneuver/collision-avoidance")
+async def maneuver_cola(req: Dict[str, str]):
+    """Trigger automated collision avoidance for a specific satellite."""
+    sat_id = req["satellite_id"]
+    sat = _get_sat(sat_id)
+    
+    # Get conjunctions
+    threats = ME.predict_conjunction(sat_id, np.array(sat["pos"]), np.array(sat["vel"]), store.objects)
+    if not threats or not threats[0]["critical"]:
+        return {"status": "SKIPPED", "reason": "No critical threats detected."}
+    
+    top = threats[0]
+    threat_obj = store.objects[top["object_id"]]
+    
+    # Compute avoidance Δv
+    dv_eci = ME.compute_avoidance_dv(
+        np.array(sat["pos"]), np.array(sat["vel"]),
+        np.array(threat_obj["pos"]), np.array(threat_obj["vel"])
+    )
+    
+    # Apply burn
+    result = ME.apply_eci_burn(sat, float(dv_eci[0]), float(dv_eci[1]), float(dv_eci[2]), sat_id=sat_id)
+    if result["status"] == "EXECUTED":
+        store.update_object(sat_id, sat["pos"], sat["vel"], datetime.now().timestamp(), "SATELLITE")
+    
+    return {"status": "EXECUTED", "burn": result, "avoided_threat": top}
+
+
+# =========================================================================
+# AUTONOMOUS DECISION & COLLISION API
+# =========================================================================
+
+@app.get("/api/collision/risk")
+async def get_collision_risk():
+    """Returns probability for all satellites."""
+    risks = []
+    for sid, sat in store.objects.items():
+        if sat.get("type") == "SATELLITE":
+            decision = decision_engine.evaluate_threat(sid, sat["pos"], sat["vel"], store.objects)
+            threat = decision.get("threat", {})
+            risks.append({
+                "satellite_id": sid,
+                "probability": threat.get("probability", 0.0),
+                "risk_level": threat.get("risk_level", "safe"),
+                "tca_s": threat.get("tca_s", 0.0),
+                "d_min_km": threat.get("d_min_km", 0.0),
+                "object_id": threat.get("object_id", "N/A"),
+                "decision": decision["decision"]
+            })
+    return {"risks": risks}
+
+@app.post("/api/decision/mode")
+async def set_decision_mode(req: DecisionRequest):
+    """Toggle Auto/Manual mode for a satellite."""
+    decision_engine.set_auto_mode(req.satellite_id, req.auto_mode)
+    return {"satellite_id": req.satellite_id, "auto_mode": req.auto_mode}
+
+@app.post("/api/decision/evaluate")
+async def evaluate_threat(req: Dict[str, str]):
+    """Evaluate threat for a specific satellite and return recommended action."""
+    sid = req["satellite_id"]
+    sat = _get_sat(sid)
+    return decision_engine.evaluate_threat(sid, sat["pos"], sat["vel"], store.objects)
+
+@app.post("/api/decision/execute")
+async def execute_mission_maneuver(req: ExecuteDecisionRequest):
+    """Execute a manual or AI-recommended maneuver in RTN frame."""
+    sat = _get_sat(req.satellite_id)
+    
+    # 1. Validate Command (Safety Gate)
+    safety_check = validator.validate_command(req.satellite_id, req.dv_rtn, store)
+    if not safety_check["go_nogo"]:
+        return {"status": "REJECTED", "reason": f"Safety Violation: {safety_check['rejections'][0]}"}
+        
+    # 2. Transform RTN to ECI (for internal physics application)
+    # ME.apply_rtn_burn already does the conversion internally
+    
+    # 3. Apply Burn
+    res = ME.apply_rtn_burn(
+        sat, 
+        float(req.dv_rtn[0]), float(req.dv_rtn[1]), float(req.dv_rtn[2]), 
+        sat_id=req.satellite_id
+    )
+    
+    if res["status"] == "EXECUTED":
+        # 4. Update Simulation Store
+        store.update_object(
+            req.satellite_id, 
+            sat["pos"], sat["vel"], 
+            datetime.now().timestamp(), 
+            "SATELLITE"
+        )
+        # Preserve fuel metadata
+        store.objects[req.satellite_id]["fuel_kg"] = sat["fuel_kg"]
+        
+    return res
+
+# ── New v3 Advanced Routes ──────────────────────────────────────────────────
+
+@app.get("/api/ground/visibility")
+async def get_visibility():
+    return gs_engine.get_fleet_visibility(store.objects, sim_clock.elapsed_sim_seconds)
+
+@app.get("/api/ground/stations")
+async def get_stations():
+    return gs_engine.stations
+
+@app.post("/api/command/validate")
+async def validate_mission_command(req: CommandValidateRequest):
+    return validator.validate_command(req.satellite_id, req.dv_rtn, store)
+
+@app.get("/api/ground-track")
+async def get_ground_track_data():
+    """Returns ground track points, historical paths, and predicted orbits for all satellites."""
+    results = []
+    for sid, sat in store.objects.items():
+        if sat.get("type") != "SATELLITE":
+            continue
+            
+        pos = np.array(sat["pos"])
+        vel = np.array(sat["vel"])
+        
+        results.append({
+            "satellite_id": sid,
+            "fuel_kg": float(sat.get("fuel_kg", 0)),
+            "current_position": subsatellite_point(pos),
+            "historical_track": historical_ground_track(sat, history_points=60, duration_seconds=5400),
+            "predicted_track": predict_ground_track(pos, vel, steps=60, duration_seconds=5400)
+        })
+    
+    return {
+        "satellites": results,
+        "terminator_line": terminator_line(datetime.now().isoformat()),
+        "timestamp": datetime.now().isoformat()
+    }
+
+@app.get("/api/conjunctions/{sat_id}")
+async def get_satellite_conjunctions(sat_id: str):
+    """Returns localized conjunction risk analysis (Bullseye chart data)."""
+    if sat_id not in store.objects:
+        raise HTTPException(status_code=404, detail="Entity not found")
+        
+    conjunctions = conjunctions_for_satellite(sat_id, store.objects)
+    return {
+        "satellite_id": sat_id,
+        "conjunctions": conjunctions,
+        "summary": {
+            "critical": len([c for c in conjunctions if c["risk_level"] == "red"]),
+            "warning": len([c for c in conjunctions if c["risk_level"] in ["yellow", "orange"]])
+        }
+    }
+
+@app.get("/api/heatmap")
+async def get_fleet_heatmap():
+    """Returns aggregate fleet health and resource levels for visualization."""
+    stats = []
+    for sid, sat in store.objects.items():
+        if sat.get("type") != "SATELLITE":
+            continue
+        stats.append({
+            "id": sid,
+            "fuel": float(sat.get("fuel_kg", 0)),
+            "fuel_pct": min(100.0, (float(sat.get("fuel_kg", 0)) / 120.0) * 100),
+            "mass": float(sat.get("mass_kg", 0)),
+            "last_seen": datetime.now().timestamp()
+        })
+    return stats
+
+@app.get("/api/gantt")
+async def get_maneuver_gantt():
+    """Returns maneuver history and scheduled burns for Gantt chart."""
+    return {
+        "events": ME.schedule_store.history,
+        "scheduled": ME.schedule_store.scheduled,
+        "sim_time": ME.schedule_store.sim_time
+    }
+
+@app.get("/api/time")
+async def get_sim_time():
+    return sim_clock.get_state()
+
+@app.post("/api/time/control")
+async def control_sim_time(req: ClockControlRequest):
+    if req.speed is not None:
+        sim_clock.set_speed(req.speed)
+    if req.paused is not None:
+        if req.paused: sim_clock.pause()
+        else: sim_clock.resume()
+    return sim_clock.get_state()
+
+@app.post("/api/transform/rtn-to-eci")
+async def transform_rtn(req: RTNTransformRequest):
+    sat = _get_sat(req.satellite_id)
+    dv_eci = rtn_calc.transform_rtn_to_eci(
+        np.array(sat["pos"]), np.array(sat["vel"]), np.array(req.dv_rtn)
+    )
+    return {"dv_eci": dv_eci.tolist()}
+
+@app.get("/api/system/performance")
+async def get_system_performance():
+    return {
+        "status": "nominal",
+        "objects": len(store.objects),
+        "hz": 1.0,
+        "memory_mb": 128 # placeholder
+    }
+
+# =========================================================================
 # ORIGINAL MODELS (kept for compat)
 # =========================================================================
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "frontend")
@@ -1185,6 +1651,12 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/3d")
     async def serve_3d_dashboard():
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+# --- React Dashboard Mounting ---
+TELEMETRY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "dist-telemetry"))
+if os.path.isdir(TELEMETRY_DIR):
+    # Mount at /telemetry for the React build
+    app.mount("/telemetry", StaticFiles(directory=TELEMETRY_DIR, html=True), name="telemetry")
     
     @app.get("/docs-dashboard")  
     async def serve_docs_dashboard():

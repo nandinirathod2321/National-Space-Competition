@@ -6,113 +6,226 @@
     <title>Akashveer — Space Situational Awareness Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Orbitron:wght@400;600;700;900&display=swap" rel="stylesheet">
-    <link href="https://fonts.cdnfonts.com/css/samarkan" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,400;1,600;1,700&family=Spectral:wght@200;400;700&family=IBM+Plex+Mono:wght@400;500;600&family=Orbitron:wght@400;600;700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/styles.css">
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23a855f7' d='M8 0l2.4 4.8L16 6l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-1.2z'/%3E%3C/svg%3E">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%231e90ff' d='M8 0l2.4 4.8L16 6l-4 4 1 6-5-3-5 3 1-6-4-4 5.6-1.2z'/%3E%3C/svg%3E">
     <style>
-        /* ── Purple-on-black overrides for globe dashboard ── */
+        /* ── Celestial Diagram Overrides: Total removal of purple ── */
         :root {
-            --accent-cyan:    #a855f7;
-            --accent-purple:  #7b2fff;
-            --accent-blue:    #c084fc;
-            --sat-color:      #a855f7;
+            --accent-cyan:    #1e90ff; /* celestial blue */
+            --accent-purple:  #63b3ed; /* star blue */
+            --accent-blue:    #c0c0c8; /* silver */
+            --accent-red:     #8B0000; /* Deep Madder Red from reference */
+            --sat-color:      #1e90ff;
             --debris-color:   #f97316;
-            --bg-primary:     #09080e;
-            --bg-main:        #09080e;
-            --bg-panel:       rgba(15,12,26,0.92);
-            --bg-card:        rgba(123,47,255,0.06);
-            --border-dim:     rgba(123,47,255,0.18);
-            --border-bright:  rgba(168,85,247,0.5);
+            --bg-void:        #000103;
+            --bg-primary:     #000103;
+            --bg-panel:       rgba(0,1,3,0.96);
+            --bg-card:        rgba(30,144,255,0.05);
+            --border-dim:     rgba(192,192,204,0.18);
+            --border-bright:  rgba(30,144,255,0.45);
+            --font-celestial: 'Cormorant Garamond', serif;
+            --font-logo:      'Kurale', serif;
         }
-        body { background: var(--bg-primary) !important; }
+        body { 
+            background: radial-gradient(circle at 50% 20%, #050a14 0%, var(--bg-primary) 80%) !important;
+            font-family: 'Spectral', serif !important;
+        }
 
-        /* Top-bar purple accent */
+        /* Top-bar starry accent */
         #top-bar {
-            border-bottom: 1px solid rgba(123,47,255,0.3) !important;
-            background: rgba(9,8,14,0.95) !important;
+            border-bottom: 0.5px dashed var(--border-dim) !important;
+            background: rgba(0,1,3,0.95) !important;
+            height: 70px !important;
         }
 
-        /* Logo gradient text */
+        /* Logo text: Celestial Serif */
         .logo-text h1 {
-            background: linear-gradient(135deg, #c084fc, #7b2fff) !important;
+            font-family: var(--font-celestial);
+            font-style: italic;
+            font-weight: 700;
+            font-size: 1.8em !important;
+            background: linear-gradient(135deg, #f8fafc, #1e90ff) !important;
             -webkit-background-clip: text !important;
             -webkit-text-fill-color: transparent !important;
             background-clip: text !important;
+            text-shadow: 0 0 20px rgba(30,144,255,0.3);
+            letter-spacing: 2px !important;
         }
+        .logo-tag { font-size: 0.55rem !important; color: #63b3ed !important; letter-spacing: 0.4em !important; opacity: 0.6; }
 
-        /* Status pill purple */
+        /* Status pill alignment */
         .status-pill.online {
-            background: rgba(123,47,255,0.15) !important;
-            color: #a855f7 !important;
-            border-color: rgba(123,47,255,0.4) !important;
+            background: rgba(30,144,255,0.1) !important;
+            color: #1e90ff !important;
+            border-color: rgba(30,144,255,0.4) !important;
+            font-family: 'Spectral', serif;
+            font-style: italic;
         }
 
-        /* Tray buttons purple */
-        .btn-tray { border-color: rgba(123,47,255,0.3) !important; }
-        .tray-btn { color: #9b82c0 !important; }
-        .tray-btn:hover { background: rgba(123,47,255,0.15) !important; color: #c084fc !important; }
-        .tray-btn.active { background: rgba(123,47,255,0.2) !important; color: #e8d5ff !important; }
+        /* Tray buttons: Silver/Thin */
+        .btn-tray { border: 0.5px solid rgba(192,192,204,0.15) !important; border-radius: 4px !important; }
+        .tray-btn { color: rgba(192,192,204,0.4) !important; font-size: 0.6rem !important; text-transform: uppercase !important; }
+        .tray-btn:hover { background: rgba(30,144,255,0.1) !important; color: #1e90ff !important; }
+        .tray-btn.active { background: rgba(30,144,255,0.15) !important; color: #fff !important; border: 0.5px solid #1e90ff !important; }
 
-        /* Panels */
-        #left-panel, #right-panel {
-            background: rgba(9,8,14,0.92) !important;
-            border-color: rgba(123,47,255,0.18) !important;
+        /* Panels: Diagrammatic look */
+        #left-panel, #right-panel, #bottom-panel {
+            background: var(--bg-panel) !important;
+            border: 0.5px solid var(--border-dim) !important;
+            backdrop-filter: blur(25px) !important;
+            -webkit-backdrop-filter: blur(25px) !important;
         }
-        .panel-title { color: #a855f7 !important; border-color: rgba(123,47,255,0.2) !important; }
-        .panel-title svg { color: #7b2fff !important; }
-        .stat-value { color: #a855f7 !important; }
-        .stat-bar-fill { background: linear-gradient(90deg,#7b2fff,#c084fc) !important; }
-        .obj-dot.sat { background: #a855f7 !important; box-shadow: 0 0 6px #a855f7 !important; }
-        .obj-list-item.selected { border-color: #a855f7 !important; background: rgba(123,47,255,0.1) !important; }
-        .detail-val { color: #a855f7 !important; }
-        #event-log { border-color: rgba(123,47,255,0.2) !important; }
-        .log-title { color: #a855f7 !important; }
-        ::-webkit-scrollbar-thumb { background: linear-gradient(180deg,#7b2fff,#4a0f9f) !important; }
+        .panel-title { 
+            font-family: var(--font-celestial);
+            font-style: italic;
+            color: #1e90ff !important; 
+            border-bottom: 0.5px dashed var(--border-dim) !important; 
+            text-transform: capitalize !important;
+            font-size: 1.1em !important;
+            letter-spacing: 1px !important;
+        }
+        .panel-title svg { color: #63b3ed !important; }
+        .stat-value { color: #f8fafc !important; font-family: 'IBM Plex Mono', monospace !important; font-weight: 200 !important; }
+        .stat-bar-fill { background: linear-gradient(90deg,#1e90ff,#63b3ed) !important; box-shadow: 0 0 10px rgba(30,144,255,0.3); }
+        .obj-dot.sat { background: #1e90ff !important; box-shadow: 0 0 10px #1e90ff !important; }
+        .obj-list-item.selected { border-color: #1e90ff !important; background: rgba(30,144,255,0.08) !important; }
+        .detail-val { color: #63b3ed !important; font-family: 'IBM Plex Mono', monospace; }
+        #event-log { border-top: 0.5px dashed var(--border-dim) !important; background: var(--bg-panel) !important; }
+        .log-title { font-family: var(--font-celestial); font-style: italic; color: #1e90ff !important; }
+        ::-webkit-scrollbar-thumb { background: #1e90ff33 !important; }
 
-        /* ── Nav button to Mission Analysis dashboard ── */
-        #btn-go-analysis {
-            padding: 7px 16px;
-            background: linear-gradient(135deg, rgba(123,47,255,0.2), rgba(74,15,159,0.15));
-            border: 1px solid rgba(168,85,247,0.6);
-            color: #c084fc;
-            font-family: 'Orbitron', sans-serif;
-            font-size: 0.72em;
-            font-weight: 700;
-            letter-spacing: 1.5px;
+        /* ── Action Buttons redesign ── */
+        .btn-action-celestial {
+            padding: 8px 18px;
+            background: transparent;
+            border: 0.5px solid rgba(192,192,204,0.3);
+            color: var(--accent-blue);
+            font-family: var(--font-celestial);
+            font-style: italic;
+            font-size: 0.85em;
             cursor: pointer;
-            border-radius: 4px;
-            transition: all 0.25s ease;
-            position: relative;
-            overflow: hidden;
-            white-space: nowrap;
+            border-radius: 2px;
+            transition: all 0.4s ease;
+            letter-spacing: 1px;
+        }
+        .btn-action-celestial:hover {
+            border-color: #1e90ff;
+            color: #fff;
+            background: rgba(30,144,255,0.05);
+            box-shadow: 0 0 20px rgba(30,144,255,0.15);
+        }
+
+        #btn-go-analysis, #btn-go-maneuver, #btn-go-telemetry, #btn-go-sim-metrics, #btn-go-planning {
+            padding: 8px 15px !important;
+            background: transparent !important;
+            border: 0.5px solid var(--border-dim) !important;
+            color: rgba(255,255,255,0.4) !important;
+            font-family: var(--font-celestial) !important;
+            font-style: italic !important;
+            font-size: 0.8em !important;
+            letter-spacing: 1px !important;
+            text-transform: capitalize !important;
+            box-shadow: none !important;
+        }
+        #btn-go-analysis:hover, #btn-go-maneuver:hover, #btn-go-telemetry:hover {
+            border-color: #1e90ff !important;
+            color: #fff !important;
+            background: rgba(30,144,255,0.05) !important;
+            box-shadow: 0 0 15px rgba(30,144,255,0.2) !important;
+        }
+        .btn-arrow { display:none !important; }
+
+        /* ── Homepage: India Logo Style ── */
+        /* ── Homepage: Indic-Style Branding (Left-Aligned Sharp) ── */
+        .home-page { 
             display: flex;
             align-items: center;
-            gap: 6px;
+            justify-content: flex-start; /* Left aligned */
+            height: 100vh;
+            width: 100vw;
+            background: #000 !important;
+            position: fixed;
+            top: 0; left: 0;
+            z-index: 9999;
+            color: #fff;
+            font-family: var(--font-celestial);
+            padding-left: 10vw; /* Push from left edge */
         }
-        #btn-go-analysis::before {
-            content: '';
+        .home-content {
+            text-align: left; /* Left aligned */
+            max-width: 900px;
+            animation: fadeIn 1.2s ease;
+            z-index: 10;
+        }
+        @keyframes fadeIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+
+        .home-logo-wrap {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 2.5rem;
+        }
+        
+        .home-title {
+            font-family: 'Inknut Antiqua', serif !important; /* Heavier/More squared like reference */
+            font-size: 7rem !important;
+            color: #fff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            text-transform: lowercase !important;
+            letter-spacing: -2px !important;
+            position: relative !important;
+            line-height: 1.1 !important;
+            display: inline-block !important;
+            font-weight: 700 !important;
+            font-style: normal !important;
+            text-shadow: 10px 10px 30px rgba(0,0,0,0.8);
+        }
+        /* Pointy Shirorekha Bar from 'hindi' reference */
+        .home-title::before {
+            content: "";
             position: absolute;
-            inset: 0;
-            background: linear-gradient(135deg,rgba(123,47,255,0.35),rgba(74,15,159,0.25));
-            opacity: 0;
-            transition: opacity 0.25s ease;
+            top: 1.2rem; 
+            left: -30px;
+            width: calc(100% + 50px);
+            height: 5px;
+            background: #fff;
+            clip-path: polygon(0 50%, 8px 0, 100% 0, 100% 100%, 8px 100%); /* Sharp Pointy Start */
+            opacity: 1;
         }
-        #btn-go-analysis:hover::before { opacity: 1; }
-        #btn-go-analysis:hover {
-            border-color: #c084fc;
-            box-shadow: 0 0 20px rgba(168,85,247,0.5), 0 0 40px rgba(123,47,255,0.2);
-            color: #e8d5ff;
-            transform: translateY(-1px);
+        .home-below {
+            display: block;
+            font-family: 'Spectral', serif;
+            font-size: 1rem;
+            letter-spacing: 15px;
+            color: rgba(255,255,255,0.7);
+            text-transform: uppercase;
+            margin-top: 0.5rem;
+            font-weight: 400;
         }
-        #btn-go-analysis .btn-arrow {
-            font-size: 1.1em;
-            animation: arrowPulse 1.5s ease-in-out infinite;
+
+        .home-desc { 
+            font-family: 'Spectral', serif; 
+            font-style: italic; 
+            font-weight: 200; 
+            opacity: 0.5; 
+            letter-spacing: 2px;
+            margin-top: 4rem;
+            color: #fff;
+            max-width: 500px;
+            line-height: 1.6;
         }
-        @keyframes arrowPulse {
-            0%,100% { transform: translateX(0); opacity:1; }
-            50%      { transform: translateX(4px); opacity:0.7; }
+
+        .loader-bar { 
+            border: 1px solid rgba(255,255,255,0.1) !important; 
+            height: 2px !important; 
+            background: rgba(255,255,255,0.05) !important; 
+            width: 300px !important; /* Keep fixed width for left alignment */
+            margin-top: 1.5rem;
+            border-radius: 5px;
         }
+        .loader-bar-fill { background: #fff !important; box-shadow: 0 0 10px #fff; }
+        .loader-status { font-size: 0.65rem; color: #aaa; font-family: 'IBM Plex Mono'; margin-top: 10px; opacity: 0.7; }
     </style>
 </head>
 <body>
@@ -126,7 +239,10 @@
         </div>
 
         <div class="home-content">
-            <h1 class="home-title">akashveer</h1>
+            <div class="home-logo-wrap">
+                <h1 class="home-title">akashveer</h1>
+                <span class="home-below">for your missions</span>
+            </div>
             <p class="home-desc">Autonomous Constellation Manager & Debris Tracking Protocol</p>
             
             <div class="home-actions">
@@ -169,8 +285,9 @@
                 <div class="utc-clock" id="utc-clock">UTC 00:00:00</div>
             </div>
             <div class="top-bar-right">
+                <div id="uplink-pill" class="pill-status pill-err" style="font-family:'Share Tech Mono',monospace;font-size:0.65rem;padding:3px 8px;border-radius:10px;margin-right:10px;border:1px solid rgba(255,255,255,0.2);">UPLINK: OFFLINE</div>
                 <div class="btn-tray">
-                    <button class="tray-btn" id="btn-toggle-grid">Grid</button>
+
                     <button class="tray-btn" id="btn-toggle-labels">Labels</button>
                     <button class="tray-btn" id="btn-toggle-orbits">Orbits</button>
                     <button class="tray-btn" id="btn-refresh-data">Refresh</button>
@@ -183,7 +300,19 @@
                 </button>
                 <button id="btn-go-maneuver" onclick="window.location.href='/maneuver'" title="Orbital Maneuver & COLA"
                   style="padding:7px 14px;background:linear-gradient(135deg,rgba(239,68,68,.15),rgba(123,47,255,.1));border:1px solid rgba(239,68,68,.5);color:#fca5a5;font-family:'Orbitron',sans-serif;font-size:.7em;font-weight:700;letter-spacing:1.5px;cursor:pointer;border-radius:4px;transition:all .25s">
-                    🚀 MANEUVER
+                    MANEUVER
+                </button>
+                <button id="btn-go-telemetry" onclick="window.location.href='/telemetry'" title="Open Real-time Telemetry Dashboard"
+                  style="margin-left:8px;padding:7px 14px;background:linear-gradient(135deg,rgba(0,212,255,.15),rgba(123,47,255,.1));border:1px solid rgba(0,212,255,.5);color:#00D4FF;font-family:'Orbitron',sans-serif;font-size:.7em;font-weight:700;letter-spacing:1.5px;cursor:pointer;border-radius:4px;transition:all .25s">
+                    TELEMETRY
+                </button>
+                <button id="btn-go-sim-metrics" onclick="window.location.href='/telemetry'" title="Advanced Simulation Stability & RK4 Analytics"
+                  style="margin-left:8px;padding:7px 14px;background:linear-gradient(135deg,rgba(168,85,247,.2),rgba(192,192,192,.15));border:1px solid rgba(168,85,247,.8);color:#C0C0C0;font-family:'Orbitron',sans-serif;font-size:.7em;font-weight:700;letter-spacing:1.5px;cursor:pointer;border-radius:4px;transition:all .25s;box-shadow:0 0 15px rgba(168,85,247,0.2)">
+                    🔬 SIM ANALYTICS
+                </button>
+                <button id="btn-go-planning" onclick="window.location.href='/telemetry'" title="Orbital Mission Planning & Keplerian Initialization"
+                  style="margin-left:8px;padding:7px 14px;background:linear-gradient(135deg,rgba(16,185,129,.2),rgba(255,215,0,.15));border:1px solid rgba(16,185,129,.8);color:#FFD700;font-family:'Orbitron',sans-serif;font-size:.7em;font-weight:700;letter-spacing:1.5px;cursor:pointer;border-radius:4px;transition:all .25s;box-shadow:0 0 15px rgba(255,215,0,0.1)">
+                    MISSION PLANNING
                 </button>
             </div>
         </header>
@@ -203,9 +332,9 @@
                     <div><label class="control-label">Δt (seconds)</label><input type="range" id="dt-slider" min="0.1" max="10" step="0.1" value="1.0" class="slider"><span id="dt-display">1.0s</span></div>
                     <div><label class="control-label">Auto-Tick Interval (ms)</label><input type="range" id="interval-slider" min="100" max="2000" step="100" value="500" class="slider"><span id="interval-display">500ms</span></div>
                     <div style="display:flex; gap: 8px; margin-top: 4px;">
-                        <button id="btn-tick" class="btn-action">▶ Tick</button>
-                        <button id="btn-auto-tick" class="btn-action">⏩ Auto</button>
-                        <button id="btn-stop" class="btn-action" style="display:none;">■ Stop</button>
+                        <button id="btn-tick" class="btn-action">Tick</button>
+                        <button id="btn-auto-tick" class="btn-action">Auto</button>
+                        <button id="btn-stop" class="btn-action" style="display:none;">Stop</button>
                     </div>
                 </div>
             </div>
@@ -240,7 +369,7 @@
 
         <!-- Debris Warning Signal -->
         <div id="debris-warning" style="display: none; position: fixed; top: 90px; left: 50%; transform: translateX(-50%); border: 2px dashed var(--warn-color); color: var(--warn-color); font-family: var(--font-display); padding: 8px 16px; font-weight: bold; border-radius: 4px; box-shadow: none; z-index: 9999; animation: none;">
-            ⚠️ DEBRIS PROXIMITY ALERT
+            DEBRIS PROXIMITY ALERT
         </div>
     </div>
 
@@ -264,6 +393,6 @@
         document.head.appendChild(pixiFallback);
     }
     </script>
-    <script type="module" src="/static/app.js"></script>
+    <script type="module" src="/static/app.js?v=2.2"></script>
 </body>
 </html>

@@ -35,9 +35,7 @@ let orbitMeshes = {};         // id -> orbit ellipse mesh
 let selectedObjectId = null;
 let autoTickInterval = null;
 let tickCount = 0;
-let gridHelper = null;
 let showLabels = true;
-let showGrid = true;
 let labelSprites = {};
 let pixi = null;
 let showOrbits = true;
@@ -281,16 +279,7 @@ function createLights() {
     scene.add(fill);
 }
 
-// ============================================================
-//  GRID HELPER
-// ============================================================
-function createGrid() {
-    gridHelper = new THREE.GridHelper(60, 60, 0x0a1a3a, 0x0a1a3a);
-    gridHelper.position.y = -EARTH_R - 0.5;
-    gridHelper.material.transparent = true;
-    gridHelper.material.opacity = 0.3;
-    scene.add(gridHelper);
-}
+
 
 // ============================================================
 //  PIXI.JS HUD
@@ -444,11 +433,21 @@ function updateObjectMesh(obj) {
 }
 
 function removeObjectMesh(id) {
-    const mesh = objectMeshes[id];
-    if (mesh) {
-        scene.remove(mesh);
-        mesh.geometry.dispose();
-        mesh.material.dispose();
+    const obj = objectMeshes[id];
+    if (obj) {
+        scene.remove(obj);
+        obj.traverse((child) => {
+            if (child.isMesh) {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            }
+        });
         delete objectMeshes[id];
     }
 }
@@ -1146,6 +1145,89 @@ function updateClock() {
 }
 
 // ============================================================
+//  REAL-TIME TELEMETRY (WebSockets)
+// ============================================================
+let telemetryWS = null;
+
+function initWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/telemetry`;
+    
+    console.log(`📡 Connecting to Telemetry Uplink: ${wsUrl}`);
+    telemetryWS = new WebSocket(wsUrl);
+
+    telemetryWS.onopen = () => {
+        addLog('UPLINK ESTABLISHED: Real-time telemetry active.', 'success');
+        const pill = document.getElementById('uplink-pill');
+        if (pill) { pill.className = 'pill-status pill-ok'; pill.textContent = 'UPLINK: LIVE'; }
+    };
+
+    telemetryWS.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'TELEMETRY_UPDATE') {
+                handleLiveTelemetry(msg.data);
+            } else if (msg.type === 'INIT_SNAPSHOT') {
+                Object.values(msg.data).forEach(handleLiveTelemetry);
+            }
+        } catch (e) {
+            console.error('WS Data Error:', e);
+        }
+    };
+
+    telemetryWS.onclose = () => {
+        addLog('UPLINK LOST: Attempting reconnection...', 'warn');
+        const pill = document.getElementById('uplink-pill');
+        if (pill) { pill.className = 'pill-status pill-err'; pill.textContent = 'UPLINK: LOST'; }
+        setTimeout(initWebSocket, 3000); // Reconnect in 3s
+    };
+
+    telemetryWS.onerror = (err) => {
+        console.error('WS Flux error:', err);
+    };
+}
+
+function handleLiveTelemetry(data) {
+    // data = { satellite_id, timestamp, pos: [x,y,z], vel, fuel_kg }
+    const id = data.satellite_id;
+    
+    // 1. Update internal state
+    objectData[id] = {
+        id: id,
+        type: 'SATELLITE',
+        r: { x: data.pos[0], y: data.pos[1], z: data.pos[2] },
+        v: { x: data.vel[0], y: data.vel[1], z: data.vel[2] },
+        fuel_kg: data.fuel_kg
+    };
+
+    // 2. Update 3D mesh
+    const obj = {
+        id: id,
+        type: 'SATELLITE',
+        pos: data.pos
+    };
+    updateObjectMesh(obj);
+
+    // 3. Update Trail if active
+    if (showOrbits) {
+        updateOrbitTrail(obj);
+    }
+
+    // 4. Update HUD if this object is selected
+    if (selectedObjectId === id) {
+        // Debounce or immediate update of detail panel if needed?
+        // For high frequency, we update critical values only
+        const distEl = document.getElementById('detail-dist');
+        const velEl = document.getElementById('detail-vel');
+        const fuelEl = document.getElementById('detail-fuel');
+        
+        if (distEl) distEl.textContent = (Math.sqrt(data.pos[0]**2 + data.pos[1]**2 + data.pos[2]**2) - EARTH_RADIUS).toFixed(2) + ' km';
+        if (velEl) velEl.textContent = Math.sqrt(data.vel[0]**2 + data.vel[1]**2 + data.vel[2]**2).toFixed(3) + ' km/s';
+        if (fuelEl) fuelEl.textContent = data.fuel_kg.toFixed(2) + ' kg';
+    }
+}
+
+// ============================================================
 //  BUTTON HANDLERS
 // ============================================================
 function setupControls() {
@@ -1245,12 +1327,7 @@ function setupControls() {
         document.getElementById('log-entries').innerHTML = '';
     });
 
-    // Toggle grid
-    document.getElementById('btn-toggle-grid').addEventListener('click', () => {
-        showGrid = !showGrid;
-        if (gridHelper) gridHelper.visible = showGrid;
-        document.getElementById('btn-toggle-grid').classList.toggle('active', showGrid);
-    });
+
 
     // Toggle labels
     document.getElementById('btn-toggle-labels').addEventListener('click', () => {
@@ -1328,7 +1405,6 @@ async function boot() {
         createEarth();
         createStarField();
         createLights();
-        createGrid();
 
         setLoadProgress(60, 'Initializing Pixi.js HUD...');
         initPixiHUD();
@@ -1338,6 +1414,9 @@ async function boot() {
 
         setLoadProgress(85, 'Connecting to backend...');
         await syncState();
+        
+        setLoadProgress(90, 'Establishing Telemetry Uplink...');
+        initWebSocket();
 
         setLoadProgress(95, 'Starting render loop...');
         animate();

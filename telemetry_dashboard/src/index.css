@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --neon-green: #10B981;
+  --neon-red: #EF4444;
+  --star-blue: #1e90ff;
+  --star-cyan: #00ffff;
+  --star-silver: #c0c0c8;
+  --star-white: #f8fafc;
+  --obsidian: #000105;
+}
+
+@layer base {
+  body {
+    background: radial-gradient(circle at 50% 10%, #08121e 0%, #000 85%);
+    @apply bg-black text-silver/90 selection:bg-white selection:text-black antialiased overflow-hidden;
+    font-family: 'Spectral', serif;
+  }
+  
+  h1, h2, h3 {
+    font-family: 'Cormorant Garamond', serif;
+    font-style: italic;
+  }
+}
+
+/* Custom Effects for the 'Star Chart' Aesthetic */
+.celestial-glow {
+  text-shadow: 0 0 20px rgba(30, 144, 255, 0.4), 0 0 5px rgba(255, 255, 255, 0.2);
+}
+
+.diagram-card {
+  @apply bg-transparent border border-white/5 relative;
+  background-image: 
+    radial-gradient(circle at 0px 0px, rgba(255,255,255,0.05) 0%, transparent 1px),
+    radial-gradient(circle at 100% 100%, rgba(255,255,255,0.05) 0%, transparent 1px);
+}
+
+.diagram-border {
+  border: 0.5px dashed rgba(192, 192, 200, 0.15);
+}
+
+.celestial-line {
+  height: 0.5px;
+  background: linear-gradient(90deg, transparent, rgba(192, 192, 200, 0.2) 50%, transparent 100%);
+}
+
+.star-point {
+  width: 3.6px;
+  height: 3.6px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 0 10px white, 0 0 20px rgba(30, 144, 255, 0.6);
+  display: inline-block;
+}
+
+.moon-glow {
+  box-shadow: 0 0 50px rgba(30, 144, 255, 0.08);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #ffffff10;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #ffffff20;
+}
+
+/* Data Display */
+.mono-val {
+  font-family: 'IBM Plex Mono', monospace;
+  letter-spacing: -0.05em;
+}
+
+/* Specific UI overrides to remove purple */
+.bg-purple-mid\/5 { background-color: rgba(30, 144, 255, 0.05) !important; }
+.text-purple-400 { color: #63b3ed !important; }
+.text-purple-300 { color: #90cdf4 !important; }
+.border-purple-500\/30 { border-color: rgba(30, 144, 255, 0.3) !important; }
+.bg-purple-500\/5 { background-color: rgba(30, 144, 255, 0.05) !important; }
+.bg-purple-600\/20 { background-color: rgba(30, 144, 255, 0.2) !important; }
+.border-purple-500 { border-color: #1e90ff !important; }
+.shadow-\[0_0_30px_rgba\(168\,85\,247\,0\.4\)\] { 
+  box-shadow: 0 0 30px rgba(30, 144, 255, 0.4) !important; 
+}
+.text-accent { color: #63b3ed !important; }
+.bg-purple-mid\/20 { background-color: rgba(30, 144, 255, 0.2) !important; }
+.bg-purple-900\/10 { background-color: rgba(13, 27, 42, 0.4) !important; }
+.border-purple-500\/20 { border-color: rgba(30, 144, 255, 0.2) !important; }
+.text-purple-300 { color: #63b3ed !important; }
+.bg-purple-500\/10 { background-color: rgba(30, 144, 255, 0.1) !important; }
+.text-purple-500 { color: #1e90ff !important; }
+.hover\:bg-purple-500:hover { background-color: #1e90ff !important; }
+.text-purple-300 { color: #63b3ed !important; }
