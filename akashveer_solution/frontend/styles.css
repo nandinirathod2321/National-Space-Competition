@@ -70,14 +70,18 @@ html, body {
 
 /* ---------- SCROLLBAR ---------- */
 ::-webkit-scrollbar {
-    width: 5px;
+    width: 8px; /* Slightly wider */
 }
 ::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.02);
 }
 ::-webkit-scrollbar-thumb {
-    background: var(--border-dim);
-    border-radius: 3px;
+    background: rgba(74, 127, 165, 0.4); /* Much more visible accent-primary */
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 127, 165, 0.6);
 }
 
 /* ============================================
@@ -767,8 +771,9 @@ html, body {
 
 /* Object List */
 .object-list {
-    max-height: 300px;
+    max-height: 50vh; /* Scalable height */
     overflow-y: auto;
+    padding-right: 4px;
 }
 .obj-list-item {
     display: flex;

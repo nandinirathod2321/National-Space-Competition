@@ -43,6 +43,13 @@ const TelemetryPage = () => {
     const selectedSat = satellites[selectedSatId];
 
     useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.get('view') === 'planning') {
+            setShowPlanning(true);
+        }
+    }, []);
+
+    useEffect(() => {
         // Initialize WebSocket Connection with metrics handler
         startTelemetryWS(updateTelemetry, setConnectionStatus, updateSimulationMetrics);
         

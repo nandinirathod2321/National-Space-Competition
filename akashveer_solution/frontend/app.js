@@ -6,6 +6,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+let bgDebrisMesh;
+const BG_DEBRIS_COUNT = 15000;
+const bgDebrisOrbits = [];
+const scratchMatrix = new THREE.Matrix4();
+
 // ---------- CONFIG ----------
 const API_BASE = window.location.origin;
 const EARTH_RADIUS = 6378.137;           // km  (real scale)
@@ -100,6 +105,7 @@ function initThree() {
  
     // Initialize Instancing
     initInstancing();
+    initBackgroundDebris();
  
     // Resize
     window.addEventListener('resize', onResize);
@@ -118,6 +124,40 @@ function initInstancing() {
     debrisInstancedMesh = new THREE.InstancedMesh(debrisGeo, debrisMat, MAX_DEBRIS);
     debrisInstancedMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     scene.add(debrisInstancedMesh);
+}
+
+function initBackgroundDebris() {
+    const geo = new THREE.SphereGeometry(DEBRIS_SCALE * 0.4, 4, 4);
+    const mat = new THREE.MeshBasicMaterial({ 
+        color: 0x444444, 
+        transparent: true, 
+        opacity: 0.3 
+    });
+    bgDebrisMesh = new THREE.InstancedMesh(geo, mat, BG_DEBRIS_COUNT);
+    
+    for (let i = 0; i < BG_DEBRIS_COUNT; i++) {
+        const alt = EARTH_RADIUS + 300 + Math.random() * 3000;
+        const orbit = {
+            radius: alt * SCALE,
+            angle: Math.random() * Math.PI * 2,
+            speed: (Math.random() * 0.02 + 0.005) * (Math.random() > 0.5 ? 1 : -1),
+            inclination: (Math.random() - 0.5) * Math.PI,
+            phase: Math.random() * Math.PI * 2
+        };
+        bgDebrisOrbits.push(orbit);
+        
+        updateBgDebrisMatrix(i, scratchMatrix, orbit, 0);
+        bgDebrisMesh.setMatrixAt(i, scratchMatrix);
+    }
+    scene.add(bgDebrisMesh);
+}
+
+function updateBgDebrisMatrix(i, matrix, orbit, time) {
+    const currentAngle = orbit.angle + time * orbit.speed;
+    const x = orbit.radius * Math.cos(currentAngle);
+    const y = orbit.radius * Math.sin(currentAngle) * Math.cos(orbit.inclination);
+    const z = orbit.radius * Math.sin(currentAngle) * Math.sin(orbit.inclination);
+    matrix.setPosition(x, y, z);
 }
 
 function onResize() {
@@ -1158,6 +1198,16 @@ function animate() {
     const camDist = camera.position.length();
     if (debrisInstancedMesh) {
         debrisInstancedMesh.visible = camDist < 50;
+    }
+
+    // Update background debris
+    if (bgDebrisMesh) {
+        const time = clock.getElapsedTime();
+        for (let i = 0; i < BG_DEBRIS_COUNT; i++) {
+            updateBgDebrisMatrix(i, scratchMatrix, bgDebrisOrbits[i], time);
+            bgDebrisMesh.setMatrixAt(i, scratchMatrix);
+        }
+        bgDebrisMesh.instanceMatrix.needsUpdate = true;
     }
  
     renderer.render(scene, camera);
