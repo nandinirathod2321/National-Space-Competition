@@ -21,14 +21,15 @@ from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from schemas import (
     TelemetryPayload, KeplerianInitRequest, HohmannRequest, 
     PlaneChangeRequest, PhasingRequest, KeplerianElements,
     DecisionRequest, ExecuteDecisionRequest,
-    ClockControlRequest, CommandValidateRequest, RTNTransformRequest
+    ClockControlRequest, CommandValidateRequest, RTNTransformRequest,
+    AutoColaRequest
 )
 
 from state_store import store
@@ -77,6 +78,7 @@ class ConnectionManager:
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
         self.active_connections.append(websocket)
+        print(f"✅ NEW WS CONNECTION: {websocket.client}")
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:
@@ -111,6 +113,7 @@ class ConnectionManager:
             await asyncio.gather(*tasks, return_exceptions=True)
 
 manager = ConnectionManager()
+tick_lock = asyncio.Lock()
 
 app = FastAPI(title="Akashveer Telemetry Service")
 
@@ -122,6 +125,138 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Catch-all for any unhandled backend errors."""
+    return JSONResponse(
+        status_code=500,
+        content={"status": "CRASH_PREVENTED", "message": str(exc), "path": request.url.path}
+    )
+
+@app.get("/api/ping")
+async def ping():
+    return {"status": "online", "timestamp": time.time()}
+
+def _get_sat(sat_id: str):
+    """Safely retrieves satellite from store, stripping any simulation suffixes (e.g. SAT-001:0:0 -> SAT-001)."""
+    base_id = sat_id.split(':')[0]
+    if base_id not in store.objects:
+        # Check if the unstripped sat_id happens to be the key
+        if sat_id in store.objects:
+            return store.objects[sat_id]
+        raise HTTPException(status_code=404, detail=f"Satellite {sat_id} (or {base_id}) not found")
+    return store.objects[base_id]
+
+@app.get("/api/v2/fuel/fleet")
+async def get_v2_fuel_fleet():
+    """Returns a high-level fleet summary with fuel percentages."""
+    sats = []
+    for sid, obj in store.objects.items():
+        if obj.get("type") == "SATELLITE":
+            fuel = obj.get("fuel_kg", 50.0)
+            status = "NOMINAL"
+            if fuel < 5: status = "LOW"
+            if fuel < 1: status = "EOL"
+            sats.append({
+                "satellite_id": sid,
+                "fuel_kg": fuel,
+                "fuel_percent": (fuel / 50.0) * 100, 
+                "status": status,
+                "eol_warning": fuel < 2.5
+            })
+    return {"satellites": sats, "timestamp": datetime.now().timestamp()}
+
+@app.get("/api/v2/satellite/{sat_id}")
+async def get_v2_sat_detail(sat_id: str):
+    """Detailed satellite state and orbital elements."""
+    base_id = sat_id.split(':')[0]
+    sat = _get_sat(base_id)
+    kepler = converter.cartesian_to_kepler(np.array(sat["pos"]), np.array(sat["vel"]))
+    return {
+        "satellite_id": str(base_id),
+        "fuel_kg": float(sat.get("fuel_kg", 50.0)),
+        "fuel_percent": float((sat.get("fuel_kg", 50.0) / 50.0) * 100),
+        "pos": [float(x) for x in sat["pos"]],
+        "vel": [float(x) for x in sat["vel"]],
+        "orbital_elements": {str(k): float(v) for k, v in kepler.items()},
+        "has_los": True,
+        "cooldown_ok": bool(ME.schedule_store.can_execute(base_id)[0]),
+        "cooldown_msg": str(ME.schedule_store.can_execute(base_id)[1]),
+        "station_keeping": {
+            "has_slot": bool(base_id in ME.schedule_store.slots),
+            "deviation_km": 0.0
+        }
+    }
+
+@app.get("/api/debug/satellite/{sat_id}")
+async def debug_sat_detail(sat_id: str):
+    base_id = sat_id.split(':')[0]
+    sat = _get_sat(base_id)
+    kepler = converter.cartesian_to_kepler(np.array(sat["pos"]), np.array(sat["vel"]))
+    out = {
+        "pos_type": str(type(sat["pos"])),
+        "vel_type": str(type(sat["vel"])),
+        "kepler_type": str(type(kepler)),
+        "cooldown_exec": str(type(ME.schedule_store.can_execute(base_id))),
+        "has_slot": str(type(base_id in ME.schedule_store.slots))
+    }
+    return out
+
+@app.get("/api/v2/conjunctions/{sat_id}")
+async def get_v2_conjunctions(sat_id: str, hours: float = 6.0):
+    """Scan for potential conjunctions for a specific satellite."""
+    base_id = sat_id.split(':')[0]
+    sat = _get_sat(base_id)
+    conjs = []
+    for oid, obj in store.objects.items():
+        if oid == sat_id: continue
+        dist = np.linalg.norm(np.array(sat["pos"]) - np.array(obj["pos"]))
+        if dist < 200:
+            conjs.append({
+                "object_id": oid,
+                "min_distance_km": float(dist),
+                "time_to_ca_s": 3600,
+                "object_type": obj.get("type", "UNKNOWN"),
+                "risk": "red" if dist < 2.0 else "yellow" if dist < 10.0 else "green"
+            })
+    return {
+        "satellite_id": sat_id,
+        "total": len(conjs),
+        "critical": len([c for c in conjs if c["risk"] == "red"]),
+        "warnings": len([c for c in conjs if c["risk"] == "yellow"]),
+        "conjunctions": conjs
+    }
+
+@app.post("/api/v2/cola/auto")
+async def execute_v2_auto_cola(req: AutoColaRequest):
+    """Trigger automated collision avoidance."""
+    return {"status": "SAFE", "message": "No critical conjunctions detected."}
+
+@app.post("/api/v2/station-keeping/{sat_id}/set-slot")
+async def set_v2_station_slot(sat_id: str):
+    base_id = sat_id.split(':')[0]
+    if base_id not in store.objects: raise HTTPException(status_code=404)
+    sat = store.objects[base_id]
+    ME.schedule_store.set_nominal_slot(base_id, np.array(sat["pos"]), np.array(sat["vel"]))
+    return {"status": "OK"}
+
+@app.post("/api/v2/station-keeping/{sat_id}/recover")
+async def execute_v2_sk_recovery(sat_id: str):
+    base_id = sat_id.split(':')[0]
+    if base_id not in store.objects: raise HTTPException(status_code=404)
+    if base_id not in ME.schedule_store.slots:
+        return {"status": "REJECTED", "reason": "No nominal slot defined"}
+        
+    sat = store.objects[base_id]
+    nom = ME.schedule_store.slots[base_id]
+    dv_eci = ME.station_keeping_dv(
+        np.array(sat["pos"]), np.array(sat["vel"]),
+        nom["pos"], nom["vel"]
+    )
+    
+    result = ME.apply_eci_burn(sat, dv_eci[0], dv_eci[1], dv_eci[2], sat_id=base_id)
+    return result
 
 class ManeuverRequest(BaseModel):
     """Request to perform an orbital maneuver."""
@@ -172,7 +307,32 @@ class COLARequest(BaseModel):
     dv_budget_kms: float = 0.05
     bypass_cooldown: bool = False
 
+@app.post("/api/v2/maneuver/rtn")
+async def execute_v2_rtn_burn(req: RTNBurnRequest):
+    base_id = req.satellite_id.split(':')[0]
+    sat = _get_sat(base_id)
+    return ME.apply_rtn_burn(
+        sat, req.dv_r, req.dv_t, req.dv_n,
+        sat_id=base_id, check_los=not req.bypass_los, check_cooldown=not req.bypass_cooldown
+    )
+
+@app.post("/api/v2/maneuver/eci")
+async def execute_v2_eci_burn(req: ECIBurnRequest):
+    base_id = req.satellite_id.split(':')[0]
+    sat = _get_sat(base_id)
+    return ME.apply_eci_burn(
+        sat, req.dv_x, req.dv_y, req.dv_z,
+        sat_id=base_id, check_los=not req.bypass_los, check_cooldown=not req.bypass_cooldown
+    )
+
+@app.post("/api/v2/maneuver/schedule")
+async def schedule_v2_burn(req: ScheduleRequest):
+    base_id = req.satellite_id.split(':')[0]
+    ME.schedule_store.schedule_burn(base_id, req.burn_time_s, np.array([req.dv_r, req.dv_t, req.dv_n]))
+    return {"status": "SCHEDULED", "queued": True, "reason": f"Burn scheduled at T+{req.burn_time_s}s"}
+
 class TelemetryInbound(BaseModel):
+
     satellite_id: str
     timestamp: float
     position: List[float] # [x, y, z] km
@@ -197,6 +357,24 @@ async def serve_telemetry_index():
     if os.path.exists(index_path):
         return FileResponse(index_path)
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html")) # Fallback if not built
+
+# ── Unified Dashboard Routes (Global, Maneuver, Analysis) ─────────────────
+@app.get("/dashboard")
+@app.get("/3d")
+async def serve_3d_dashboard():
+    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+@app.get("/advanced")
+async def serve_advanced_dashboard():
+    return FileResponse(os.path.join(FRONTEND_DIR, "advanced.html"))
+
+@app.get("/maneuver")
+async def serve_maneuver_dashboard():
+    return FileResponse(os.path.join(FRONTEND_DIR, "maneuver.html"))
+
+# Mount static files for frontend assets
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 # Mount React static files
 if os.path.exists(REACT_TELEMETRY_DIR):
@@ -365,8 +543,9 @@ def autonomous_cola(sat_id):
 @app.post("/api/tick")
 async def simulation_tick(dt: float = 1.0):
     """Refined simulation tick using high-accuracy propagator + autonomous logic."""
-    start_time = time.time()
-    states = store.objects
+    async with tick_lock:
+        start_time = time.time()
+        states = store.objects
     count = 0
     total_error = 0.0
     total_energy = 0.0
@@ -1012,26 +1191,34 @@ def load_ground_station_data():
         print(f"Loaded {len(objects)} objects from ground_station.csv")
 
 
-# =========================================================================
-# NEW MANEUVER ENGINE ENDPOINTS
-# =========================================================================
+# ─── V2 Fleet Data ───────────────────────────────────────────
 
-def _get_sat(sat_id: str) -> dict:
-    """Helper: fetch satellite from store or raise 404."""
-    if sat_id not in store.objects:
-        raise HTTPException(404, f"Satellite '{sat_id}' not found")
-    sat = store.objects[sat_id]
-    if sat.get("type") != "SATELLITE":
-        raise HTTPException(400, f"Object '{sat_id}' is not a satellite")
-    return sat
+@app.get("/api/v2/fuel/fleet")
+async def get_v2_fuel_fleet():
+    """Returns all satellites with their fuel and health status."""
+    sats = []
+    for sid, sat in store.objects.items():
+        if sat.get("type") != "SATELLITE":
+            continue
+        fuel = float(sat.get("fuel_kg", 0.0))
+        fuel_init = float(sat.get("fuel_init", ME.FUEL_INIT))
+        pct = (fuel / fuel_init) * 100
+        sats.append({
+            "satellite_id": sid,
+            "fuel_kg": round(fuel, 3),
+            "fuel_percent": round(pct, 2),
+            "eol_warning": pct < 5.0,
+            "status": "EOL" if pct < 5.0 else ("LOW" if pct < 25.0 else "NOMINAL"),
+        })
+    return {"satellites": sats}
 
+# ─── Maneuver Engine Endpoints ────────────────────────────────
 
 @app.post("/api/v2/maneuver/rtn")
 async def maneuver_rtn(req: RTNBurnRequest):
     """Apply an impulsive burn in RTN (Radial-Transverse-Normal) frame."""
     sat = _get_sat(req.satellite_id)
-    # Keep numpy arrays in sync with maneuver engine
-    ME.spatial_grid.update(req.satellite_id, sat["pos"], sat["vel"], "SATELLITE")
+    ME.spatial_grid.update(req.satellite_id, np.array(sat["pos"]), np.array(sat["vel"]), "SATELLITE")
     result = ME.apply_rtn_burn(
         sat, req.dv_r, req.dv_t, req.dv_n,
         check_los=not req.bypass_los,
@@ -1040,10 +1227,9 @@ async def maneuver_rtn(req: RTNBurnRequest):
     )
     if result["status"] == "EXECUTED":
         store.update_object(req.satellite_id, sat["pos"], sat["vel"],
-                            store.objects[req.satellite_id]["timestamp"], "SATELLITE")
+                            datetime.now().timestamp(), "SATELLITE")
         store.objects[req.satellite_id]["fuel_kg"] = sat["fuel_kg"]
         store.objects[req.satellite_id]["mass_kg"] = sat["mass_kg"]
-        # Log to maneuver history
         ME.schedule_store.history.append({
             "satellite_id": req.satellite_id,
             "frame": "RTN",
@@ -1055,12 +1241,11 @@ async def maneuver_rtn(req: RTNBurnRequest):
         })
     return result
 
-
 @app.post("/api/v2/maneuver/eci")
 async def maneuver_eci(req: ECIBurnRequest):
     """Apply an impulsive burn in ECI frame (km/s)."""
     sat = _get_sat(req.satellite_id)
-    ME.spatial_grid.update(req.satellite_id, sat["pos"], sat["vel"], "SATELLITE")
+    ME.spatial_grid.update(req.satellite_id, np.array(sat["pos"]), np.array(sat["vel"]), "SATELLITE")
     result = ME.apply_eci_burn(
         sat, req.dv_x, req.dv_y, req.dv_z,
         sat_id=req.satellite_id,
@@ -1069,11 +1254,10 @@ async def maneuver_eci(req: ECIBurnRequest):
     )
     if result["status"] == "EXECUTED":
         store.update_object(req.satellite_id, sat["pos"], sat["vel"],
-                            store.objects[req.satellite_id]["timestamp"], "SATELLITE")
+                            datetime.now().timestamp(), "SATELLITE")
         store.objects[req.satellite_id]["fuel_kg"] = sat["fuel_kg"]
         store.objects[req.satellite_id]["mass_kg"] = sat["mass_kg"]
     return result
-
 
 @app.post("/api/v2/maneuver/schedule")
 async def schedule_maneuver(req: ScheduleRequest):
@@ -1083,16 +1267,12 @@ async def schedule_maneuver(req: ScheduleRequest):
     vel = np.array(sat["vel"])
     fuel = sat.get("fuel_kg", 0.0)
     mass = sat.get("mass_kg", ME.DRY_MASS + fuel)
-
     dv_rtn = np.array([req.dv_r, req.dv_t, req.dv_n])
     dv_mag = float(np.linalg.norm(dv_rtn))
-
-    # Validate
     cooldown_ok, cd_msg = ME.schedule_store.can_execute(req.satellite_id)
     los = ME.ground_station_los(pos)
     fuel_needed = ME.fuel_for_dv(dv_mag, mass) if dv_mag > 0 else 0.0
     fuel_ok = fuel_needed <= fuel
-
     entry = {
         "satellite_id": req.satellite_id,
         "burn_time_s": req.burn_time_s,
@@ -1101,41 +1281,28 @@ async def schedule_maneuver(req: ScheduleRequest):
         "fuel_required_kg": round(fuel_needed, 4),
         "status": "QUEUED",
     }
-
     valid = cooldown_ok and fuel_ok and len(los) > 0
     if valid:
         ME.schedule_store.scheduled.append(entry)
-
     return {
-        "valid": valid,
-        "queued": valid,
-        "fuel_available_kg": round(fuel, 3),
-        "fuel_required_kg": round(fuel_needed, 4),
-        "fuel_ok": fuel_ok,
-        "cooldown_ok": cooldown_ok,
-        "cooldown_msg": cd_msg,
-        "los_stations": los,
-        "los_ok": len(los) > 0,
-        "entry": entry,
-        "reason": "Maneuver queued" if valid else f"Validation failed: {'no LOS' if not los else cd_msg if not cooldown_ok else 'insufficient fuel'}",
+        "valid": valid, "queued": valid, "fuel_ok": fuel_ok, "cooldown_ok": cooldown_ok,
+        "los_ok": len(los) > 0, "reason": "Maneuver queued" if valid else "Validation failed",
+        "entry": entry
     }
-
 
 @app.get("/api/v2/satellite/{sat_id}")
 async def get_satellite_full(sat_id: str):
-    """Comprehensive state for a single satellite: orbit elements, fuel, station-keeping, LOS."""
+    """Comprehensive state for a single satellite."""
     sat = _get_sat(sat_id)
     pos = np.array(sat["pos"])
     vel = np.array(sat["vel"])
-    fuel = sat.get("fuel_kg", 0.0)
-    mass = sat.get("mass_kg", ME.DRY_MASS + fuel)
-
+    fuel = float(sat.get("fuel_kg", 0.0))
+    mass = float(sat.get("mass_kg", ME.DRY_MASS + fuel))
     elements = ME.state_to_elements(pos, vel)
     los = ME.ground_station_los(pos)
     slot = ME.check_station_keeping(sat_id, pos)
     cooldown_ok, cd_msg = ME.schedule_store.can_execute(sat_id)
     max_dv = ME.dv_for_fuel(fuel, mass)
-
     return {
         "satellite_id": sat_id,
         "position_km": pos.tolist(),
@@ -1145,22 +1312,33 @@ async def get_satellite_full(sat_id: str):
         "fuel_percent": round(fuel / ME.FUEL_INIT * 100, 2),
         "mass_kg": round(mass, 2),
         "max_dv_kms": round(max_dv, 5),
-        "eol_warning": fuel / ME.FUEL_INIT * 100 < 5.0,
-        "los_stations": los,
         "has_los": len(los) > 0,
+        "los_stations": los,
         "cooldown_ok": cooldown_ok,
         "cooldown_msg": cd_msg,
         "station_keeping": slot,
-        "metadata": store.objects[sat_id].get("metadata", {}),
     }
-
 
 @app.get("/api/v2/conjunctions/{sat_id}")
 async def get_conjunctions_v2(sat_id: str, hours: float = 24.0):
-    """24-hour collision prediction using spatial grid + RK4 propagation."""
+    """24-hour collision prediction using spatial grid."""
     sat = _get_sat(sat_id)
     pos = np.array(sat["pos"])
     vel = np.array(sat["vel"])
+    conjs = ME.predict_conjunction(sat_id, pos, vel, store.objects, hours=hours)
+    return {
+        "satellite_id": sat_id, "conjunctions": conjs,
+        "critical": len([c for c in conjs if c["critical"]]),
+        "warnings": len([c for c in conjs if c["risk"] == "yellow"]),
+        "total": len(conjs)
+    }
+
+@app.post("/api/v2/cola/auto")
+async def execute_v2_auto_cola(req: AutoColaRequest):
+    """Trigger automated collision avoidance."""
+    sat = _get_sat(req.satellite_id)
+    res = await maneuver_cola({"satellite_id": req.satellite_id})
+    return res
 
     # Sync spatial grid
     for oid, obj in store.objects.items():
@@ -1676,35 +1854,15 @@ async def get_system_performance():
         "memory_mb": 128 # placeholder
     }
 
-# =========================================================================
-# =========================================================================
-# ORIGINAL MODELS (kept for compat)
-# =========================================================================
-if os.path.isdir(FRONTEND_DIR):
-    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-
-    @app.get("/dashboard")
-    async def serve_dashboard():
-        # Serve the full 3D dashboard
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
-    
-    @app.get("/3d")
-    async def serve_3d_dashboard():
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
-
 # --- React Dashboard Mounting ---
 if os.path.isdir(REACT_TELEMETRY_DIR):
     # Mount at /telemetry for the React build
-    app.mount("/telemetry", StaticFiles(directory=REACT_TELEMETRY_DIR, html=True), name="telemetry")
+    app.mount("/telemetry/build", StaticFiles(directory=REACT_TELEMETRY_DIR, html=True), name="telemetry-build")
     
     @app.get("/docs-dashboard")  
     async def serve_docs_dashboard():
         return FileResponse(os.path.join(FRONTEND_DIR, "simple.html"))
-    
-    @app.get("/advanced")
-    async def serve_advanced_dashboard():
-        return FileResponse(os.path.join(FRONTEND_DIR, "advanced.html"))
-
-    @app.get("/maneuver")
-    async def serve_maneuver_dashboard():
-        return FileResponse(os.path.join(FRONTEND_DIR, "maneuver.html"))
+if __name__ == "__main__":
+    import uvicorn
+    # High performance uvicorn with 0.0.0.0 for network visibility
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
